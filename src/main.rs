@@ -196,11 +196,36 @@ async fn main() -> Result<()> {
     }
 }
 
+// ─── Vault Resolution ────────────────────────────────────────────────────────
+
+/// Global state persisted at ~/.config/vault-search-mcp/state.json.
+/// Supports multiple registered vaults with a default.
+///
+/// Format:
+/// ```json
+/// {
+///   "default": "/Users/me/vault-a",
+///   "vaults": [
+///     "/Users/me/vault-a",
+///     "/Users/me/vault-b"
+///   ]
+/// }
+/// ```
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct GlobalState {
+    /// The default vault (used when no --vault is passed)
+    #[serde(default)]
+    default: Option<String>,
+    /// All registered vaults (added on each `init`)
+    #[serde(default)]
+    vaults: Vec<String>,
+}
+
 /// Resolve vault path from explicit argument, or auto-detect.
 /// Priority:
 /// 1. Explicit --vault argument (already handled by clap/env)
 /// 2. Walk up from CWD looking for `.vault-mcp/config.toml` (already initialized vault)
-/// 3. Global last-used vault from ~/.config/vault-search-mcp/state.json
+/// 3. Default vault from global state (~/.config/vault-search-mcp/state.json)
 fn resolve_vault(explicit: Option<String>) -> Result<String> {
     if let Some(v) = explicit {
         return Ok(v);
@@ -217,9 +242,10 @@ fn resolve_vault(explicit: Option<String>) -> Result<String> {
         }
     }
 
-    // Try global state (last vault used during init)
-    if let Some(path) = load_last_vault() {
-        return Ok(path);
+    // Try global state (default vault)
+    let state = load_global_state();
+    if let Some(ref path) = state.default {
+        return Ok(path.clone());
     }
 
     anyhow::bail!(
@@ -231,23 +257,41 @@ fn resolve_vault(explicit: Option<String>) -> Result<String> {
     );
 }
 
-/// Load the last-used vault path from global state file.
-fn load_last_vault() -> Option<String> {
-    let state_path = global_state_path()?;
-    let content = std::fs::read_to_string(state_path).ok()?;
-    let state: serde_json::Value = serde_json::from_str(&content).ok()?;
-    state.get("vault_path")?.as_str().map(|s| s.to_string())
+/// Load global state from disk.
+fn load_global_state() -> GlobalState {
+    global_state_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
 }
 
-/// Save vault path to global state so subsequent commands auto-resolve it.
-fn save_last_vault(vault_path: &str) {
+/// Save global state to disk.
+fn save_global_state(state: &GlobalState) {
     if let Some(state_path) = global_state_path() {
-        let state = serde_json::json!({ "vault_path": vault_path });
         if let Some(parent) = state_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        std::fs::write(state_path, state.to_string()).ok();
+        if let Ok(content) = serde_json::to_string_pretty(state) {
+            std::fs::write(state_path, content).ok();
+        }
     }
+}
+
+/// Register a vault in global state (called during `init`).
+/// Sets it as default if it's the first, or if it's being re-initialized.
+fn register_vault(vault_path: &str) {
+    let mut state = load_global_state();
+    let path = vault_path.to_string();
+
+    // Add to list if not already present
+    if !state.vaults.contains(&path) {
+        state.vaults.push(path.clone());
+    }
+
+    // Set as default (most recently initialized vault wins)
+    state.default = Some(path);
+
+    save_global_state(&state);
 }
 
 /// Path to global state: ~/.config/vault-search-mcp/state.json
@@ -565,7 +609,7 @@ fn run_init(vault_path: &str) -> Result<()> {
     };
 
     Config::save_config_file(vault_path, &config_file)?;
-    save_last_vault(vault_path);
+    register_vault(vault_path);
 
     let config_path = Config::config_path(vault_path);
     println!();
