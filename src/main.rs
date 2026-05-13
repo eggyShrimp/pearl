@@ -122,11 +122,6 @@ fn detect_vault() -> Result<String> {
     let theme = ColorfulTheme::default();
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-    eprintln!(
-        "  {} Scanning for Obsidian vaults...",
-        style("⟳").cyan().bold()
-    );
-
     // Strategy 1: Walk up from CWD
     if let Ok(cwd) = std::env::current_dir() {
         let mut dir = Some(cwd.as_path());
