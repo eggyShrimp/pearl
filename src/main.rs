@@ -4,6 +4,8 @@ mod indexer;
 mod search;
 mod server;
 
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -41,6 +43,9 @@ enum Commands {
         /// Max results
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
+        /// Output as JSON (machine-readable)
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Initialize vault configuration (interactive setup)
     Init {
@@ -64,42 +69,116 @@ async fn main() -> Result<()> {
             server::run_server(&vault).await
         }
         Commands::Index { vault, force } => {
+            use console::style;
+            use std::io::Write;
+
             tracing_subscriber::fmt()
                 .with_env_filter("vault_search_mcp=info")
+                .with_writer(std::io::stderr)
                 .init();
-            let stats = indexer::index_vault(&vault, force).await?;
-            println!("Indexing complete:");
-            println!("  Total files: {}", stats.total_files);
-            println!("  Indexed: {}", stats.indexed);
-            println!("  Skipped (unchanged): {}", stats.skipped);
-            println!("  Deleted: {}", stats.deleted);
-            println!("  Total chunks: {}", stats.total_chunks);
+
+            let is_tty = std::io::stdout().is_terminal();
+
+            let stats = indexer::index_vault_with_progress(&vault, force, |progress| {
+                if is_tty {
+                    // Overwrite current line with progress
+                    eprint!(
+                        "\r  [{}/{}] {}",
+                        progress.current,
+                        progress.total,
+                        progress.path
+                    );
+                    // Clear rest of line in case previous path was longer
+                    eprint!("\x1b[K");
+                    std::io::stderr().flush().ok();
+                }
+            })
+            .await?;
+
+            if is_tty {
+                // Clear progress line
+                eprint!("\r\x1b[K");
+            }
+
+            println!();
+            println!(
+                "  {} Indexing complete",
+                style("✓").green().bold()
+            );
+            println!();
+            println!(
+                "    {}  {}",
+                style("files").dim(),
+                stats.total_files
+            );
+            println!(
+                "    {}  {}",
+                style("indexed").dim(),
+                stats.indexed
+            );
+            println!(
+                "    {}  {}",
+                style("skipped").dim(),
+                stats.skipped
+            );
+            println!(
+                "    {}  {}",
+                style("deleted").dim(),
+                stats.deleted
+            );
+            println!(
+                "    {}  {}",
+                style("chunks").dim(),
+                stats.total_chunks
+            );
+            println!();
             Ok(())
         }
         Commands::Search {
             vault,
             query,
             limit,
+            json,
         } => {
             tracing_subscriber::fmt()
                 .with_env_filter("vault_search_mcp=info")
                 .with_writer(std::io::stderr)
                 .init();
             let results = search::hybrid_search(&vault, &query, limit, None, None).await?;
-            for (i, r) in results.iter().enumerate() {
+
+            if json {
+                // Machine-readable JSON output
                 println!(
-                    "{}. [{}] {} (score: {:.3})",
-                    i + 1,
-                    r.match_type,
-                    r.path,
-                    r.score
+                    "{}",
+                    serde_json::to_string_pretty(&results).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
                 );
-                println!("   {}", r.chunk.chars().take(100).collect::<String>());
-                println!();
+            } else {
+                // Human-readable output
+                for (i, r) in results.iter().enumerate() {
+                    println!(
+                        "{}. [{}] {} (score: {:.3})",
+                        i + 1,
+                        r.match_type,
+                        r.path,
+                        r.score
+                    );
+                    println!("   {}", r.chunk.chars().take(100).collect::<String>());
+                    println!();
+                }
+                if results.is_empty() {
+                    println!("  No results found.");
+                }
             }
             Ok(())
         }
         Commands::Init { vault } => {
+            // Guard: init requires an interactive terminal
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!(
+                    "init requires an interactive terminal.\n\
+                     Hint: create .vault-mcp/config.toml manually, or run in an interactive shell."
+                );
+            }
             let vault_path = match vault {
                 Some(v) => v,
                 None => detect_vault()?,

@@ -22,8 +22,25 @@ pub struct IndexStats {
     pub total_chunks: usize,
 }
 
+/// Progress information emitted during indexing.
+pub struct IndexProgress {
+    pub current: usize,
+    pub total: usize,
+    pub path: String,
+    pub chunks: usize,
+}
+
 /// Run incremental indexing of the vault.
 pub async fn index_vault(vault_path: &str, force: bool) -> Result<IndexStats> {
+    index_vault_with_progress(vault_path, force, |_| {}).await
+}
+
+/// Run incremental indexing with a progress callback.
+pub async fn index_vault_with_progress(
+    vault_path: &str,
+    force: bool,
+    on_progress: impl Fn(&IndexProgress),
+) -> Result<IndexStats> {
     let config = Config::new(vault_path);
     fs::create_dir_all(&config.index.data_dir)?;
 
@@ -74,8 +91,9 @@ pub async fn index_vault(vault_path: &str, force: bool) -> Result<IndexStats> {
 
     // Process files that need indexing
     let mut fts_docs = Vec::new();
+    let total_to_index = to_index.len();
 
-    for (file_path, content) in &to_index {
+    for (idx, (file_path, content)) in to_index.iter().enumerate() {
         // Remove old vectors for this file
         vector_index.remove_file(file_path);
 
@@ -138,6 +156,14 @@ pub async fn index_vault(vault_path: &str, force: bool) -> Result<IndexStats> {
         });
 
         stats.indexed += 1;
+
+        on_progress(&IndexProgress {
+            current: idx + 1,
+            total: total_to_index,
+            path: file_path.clone(),
+            chunks: chunks.len(),
+        });
+
         info!("Indexed: {} ({} chunks)", file_path, chunks.len());
     }
 
