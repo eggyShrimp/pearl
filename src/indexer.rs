@@ -28,6 +28,11 @@ pub async fn index_vault(vault_path: &str, force: bool) -> Result<IndexStats> {
     fs::create_dir_all(&config.index.data_dir)?;
 
     let files = scan_vault(&config.vault_path);
+
+    // Detect dimension mismatch: if existing vectors have a different dimension
+    // than the configured model, force a full reindex.
+    let force = force || detect_dimension_mismatch(&config);
+
     let old_hashes = if force {
         HashMap::new()
     } else {
@@ -169,6 +174,50 @@ pub async fn index_vault(vault_path: &str, force: bool) -> Result<IndexStats> {
     save_hashes(&config.hashes_path(), &new_hashes)?;
 
     Ok(stats)
+}
+
+/// Detect if existing vector dimensions don't match what we'd get from the current model.
+/// If `dimensions` is configured, compare against that. Otherwise, probe with a test embedding.
+fn detect_dimension_mismatch(config: &Config) -> bool {
+    let vector_index = match VectorIndex::load(&config.vectors_path()) {
+        Ok(idx) => idx,
+        Err(_) => return false, // No existing index, no mismatch
+    };
+
+    // Get dimension from existing vectors
+    let existing_dim = match vector_index.entries.first() {
+        Some(entry) => entry.vector.len(),
+        None => return false, // Empty index, no mismatch
+    };
+
+    // If dimensions is explicitly configured, use that
+    if let Some(configured_dim) = config.embedding.dimensions {
+        if configured_dim != existing_dim {
+            info!(
+                "Dimension mismatch: existing index has {}, config specifies {}. Forcing full reindex.",
+                existing_dim, configured_dim
+            );
+            return true;
+        }
+        return false;
+    }
+
+    // Otherwise, do a probe embedding to check actual dimensions
+    match get_embeddings(&config.embedding, &["dimension probe".to_string()]) {
+        Ok(vecs) if !vecs.is_empty() => {
+            let actual_dim = vecs[0].len();
+            if actual_dim != existing_dim {
+                info!(
+                    "Dimension mismatch: existing index has {}, current model produces {}. Forcing full reindex.",
+                    existing_dim, actual_dim
+                );
+                true
+            } else {
+                false
+            }
+        }
+        _ => false, // Can't probe, assume OK
+    }
 }
 
 fn load_hashes(path: &Path) -> HashMap<String, String> {

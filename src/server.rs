@@ -105,12 +105,20 @@ impl VaultServer {
     fn vault_status(&self) -> String {
         let config = Config::new(&self.vault_path);
         let health = embedder::check_health(&config.embedding);
+        let api_key_status = match config.embedding.resolve_api_key() {
+            Some(k) if !k.is_empty() => format!("configured ({}...)", &k[..k.len().min(8)]),
+            Some(_) => "empty".into(),
+            None => "not required".into(),
+        };
         format!(
-            "Embedding service: {}\nEndpoint: {}\nModel: {}\nVault: {}",
+            "Provider: {}\nEmbedding service: {}\nEndpoint: {}\nModel: {}\nAPI key: {}\nVault: {}\nConfig: {}",
+            config.embedding.provider,
             health.message(),
             config.embedding.endpoint,
             config.embedding.model,
-            config.vault_path.display()
+            api_key_status,
+            config.vault_path.display(),
+            if Config::config_exists(&self.vault_path) { "found" } else { "not found (using defaults)" }
         )
     }
 }
