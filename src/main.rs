@@ -10,7 +10,21 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "vault-search-mcp", version, about = "Local-first semantic search MCP server for Obsidian vaults")]
+#[command(
+    name = "vault-search-mcp",
+    version,
+    about = "Semantic search for Obsidian vaults, exposed as an MCP server for AI agents.",
+    long_about = "vault-search-mcp provides hybrid semantic + full-text search over your Obsidian vault.\n\n\
+        It embeds your notes using a local (Ollama) or cloud (OpenAI) model, stores vectors\n\
+        alongside your vault, and serves search results via the Model Context Protocol (MCP)\n\
+        for AI coding agents like Claude Desktop, Cursor, or OpenCode.\n\n\
+        Quick start:\n\
+        \x20 1. vault-search-mcp init              # configure embedding provider\n\
+        \x20 2. vault-search-mcp index             # build the search index\n\
+        \x20 3. vault-search-mcp serve             # start MCP server for your agent\n\n\
+        All index data is stored locally in {vault}/.vault-mcp/.",
+    after_help = "Documentation: https://github.com/user/vault-search-mcp"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -18,13 +32,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the MCP server (stdio transport)
+    /// Start the MCP server for AI agents to connect to (stdio transport).
+    ///
+    /// The server exposes tools: hybrid_search, index_vault, get_note, list_notes, vault_status.
+    /// AI agents communicate via JSON-RPC over stdin/stdout.
     Serve {
         /// Path to the Obsidian vault
         #[arg(short, long, env = "VAULT_PATH")]
         vault: String,
     },
-    /// Index the vault (build or update search index)
+
+    /// Build or update the search index (embeddings + full-text).
+    ///
+    /// Only re-embeds files that changed since last run (incremental, based on SHA-256 hashes).
+    /// Use --force to rebuild everything, e.g. after switching embedding models.
     Index {
         /// Path to the Obsidian vault
         #[arg(short, long, env = "VAULT_PATH")]
@@ -33,21 +54,29 @@ enum Commands {
         #[arg(short, long, default_value_t = false)]
         force: bool,
     },
-    /// Search the vault (CLI mode, for testing)
+
+    /// Run a search query from the terminal (for testing and scripting).
+    ///
+    /// Combines vector similarity and full-text search, returns ranked results.
+    /// Use --json for machine-readable output that can be piped to jq or other tools.
     Search {
         /// Path to the Obsidian vault
         #[arg(short, long, env = "VAULT_PATH")]
         vault: String,
-        /// Search query
+        /// Natural language search query
         query: String,
-        /// Max results
+        /// Maximum number of results to return
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
-        /// Output as JSON (machine-readable)
+        /// Output as JSON (machine-readable, pipe-friendly)
         #[arg(long, default_value_t = false)]
         json: bool,
     },
-    /// Initialize vault configuration (interactive setup)
+
+    /// Interactive setup wizard — configure embedding provider and generate config.
+    ///
+    /// Detects your vault location and Ollama endpoint automatically.
+    /// Writes configuration to {vault}/.vault-mcp/config.toml.
     Init {
         /// Path to the Obsidian vault (auto-detected if omitted)
         #[arg(short, long, env = "VAULT_PATH")]
@@ -84,9 +113,7 @@ async fn main() -> Result<()> {
                     // Overwrite current line with progress
                     eprint!(
                         "\r  [{}/{}] {}",
-                        progress.current,
-                        progress.total,
-                        progress.path
+                        progress.current, progress.total, progress.path
                     );
                     // Clear rest of line in case previous path was longer
                     eprint!("\x1b[K");
@@ -101,36 +128,13 @@ async fn main() -> Result<()> {
             }
 
             println!();
-            println!(
-                "  {} Indexing complete",
-                style("✓").green().bold()
-            );
+            println!("  {} Indexing complete", style("✓").green().bold());
             println!();
-            println!(
-                "    {}  {}",
-                style("files").dim(),
-                stats.total_files
-            );
-            println!(
-                "    {}  {}",
-                style("indexed").dim(),
-                stats.indexed
-            );
-            println!(
-                "    {}  {}",
-                style("skipped").dim(),
-                stats.skipped
-            );
-            println!(
-                "    {}  {}",
-                style("deleted").dim(),
-                stats.deleted
-            );
-            println!(
-                "    {}  {}",
-                style("chunks").dim(),
-                stats.total_chunks
-            );
+            println!("    {}  {}", style("files").dim(), stats.total_files);
+            println!("    {}  {}", style("indexed").dim(), stats.indexed);
+            println!("    {}  {}", style("skipped").dim(), stats.skipped);
+            println!("    {}  {}", style("deleted").dim(), stats.deleted);
+            println!("    {}  {}", style("chunks").dim(), stats.total_chunks);
             println!();
             Ok(())
         }
@@ -150,7 +154,8 @@ async fn main() -> Result<()> {
                 // Machine-readable JSON output
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&results).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
+                    serde_json::to_string_pretty(&results)
+                        .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
                 );
             } else {
                 // Human-readable output
@@ -315,18 +320,9 @@ fn run_init(vault_path: &str) -> Result<()> {
     let theme = ColorfulTheme::default();
 
     println!();
-    println!(
-        "  {}",
-        style("vault-search-mcp · Setup").bold()
-    );
-    println!(
-        "  {}",
-        style("─".repeat(40)).dim()
-    );
-    println!(
-        "  Vault: {}",
-        style(vault_path).cyan().underlined()
-    );
+    println!("  {}", style("vault-search-mcp · Setup").bold());
+    println!("  {}", style("─".repeat(40)).dim());
+    println!("  Vault: {}", style(vault_path).cyan().underlined());
     println!();
 
     // Check if config already exists
@@ -420,10 +416,7 @@ fn run_init(vault_path: &str) -> Result<()> {
 
             let api_key_source = Select::with_theme(&theme)
                 .with_prompt("  API key source")
-                .items(&[
-                    "Read from $OPENAI_API_KEY env var",
-                    "Enter key now",
-                ])
+                .items(&["Read from $OPENAI_API_KEY env var", "Enter key now"])
                 .default(0)
                 .interact()?;
 
@@ -512,14 +505,8 @@ fn run_init(vault_path: &str) -> Result<()> {
 
     let config_path = Config::config_path(vault_path);
     println!();
-    println!(
-        "  {}",
-        style("─".repeat(40)).dim()
-    );
-    println!(
-        "  {} Configuration saved!",
-        style("✓").green().bold()
-    );
+    println!("  {}", style("─".repeat(40)).dim());
+    println!("  {} Configuration saved!", style("✓").green().bold());
     println!();
     println!(
         "  {}  {}",
@@ -531,21 +518,14 @@ fn run_init(vault_path: &str) -> Result<()> {
         style("endpoint").dim(),
         embedding_config.endpoint
     );
-    println!(
-        "  {}     {}",
-        style("model").dim(),
-        embedding_config.model
-    );
+    println!("  {}     {}", style("model").dim(), embedding_config.model);
     println!(
         "  {}    {}",
         style("config").dim(),
         style(config_path.display()).underlined()
     );
     println!();
-    println!(
-        "  {}",
-        style("Next steps:").bold()
-    );
+    println!("  {}", style("Next steps:").bold());
     println!();
     println!(
         "    {}  vault-search-mcp index --vault {}",
