@@ -37,9 +37,9 @@ enum Commands {
     /// The server exposes tools: hybrid_search, index_vault, get_note, list_notes, vault_status.
     /// AI agents communicate via JSON-RPC over stdin/stdout.
     Serve {
-        /// Path to the Obsidian vault
+        /// Path to the Obsidian vault (resolved automatically if omitted)
         #[arg(short, long, env = "VAULT_PATH")]
-        vault: String,
+        vault: Option<String>,
     },
 
     /// Build or update the search index (embeddings + full-text).
@@ -47,9 +47,9 @@ enum Commands {
     /// Only re-embeds files that changed since last run (incremental, based on SHA-256 hashes).
     /// Use --force to rebuild everything, e.g. after switching embedding models.
     Index {
-        /// Path to the Obsidian vault
+        /// Path to the Obsidian vault (resolved automatically if omitted)
         #[arg(short, long, env = "VAULT_PATH")]
-        vault: String,
+        vault: Option<String>,
         /// Force full reindex (ignore cached hashes)
         #[arg(short, long, default_value_t = false)]
         force: bool,
@@ -60,9 +60,9 @@ enum Commands {
     /// Combines vector similarity and full-text search, returns ranked results.
     /// Use --json for machine-readable output that can be piped to jq or other tools.
     Search {
-        /// Path to the Obsidian vault
+        /// Path to the Obsidian vault (resolved automatically if omitted)
         #[arg(short, long, env = "VAULT_PATH")]
-        vault: String,
+        vault: Option<String>,
         /// Natural language search query
         query: String,
         /// Maximum number of results to return
@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Serve { vault } => {
+            let vault = resolve_vault(vault)?;
             // In serve mode, only log to stderr (stdout is MCP transport)
             tracing_subscriber::fmt()
                 .with_env_filter("vault_search_mcp=info")
@@ -98,6 +99,7 @@ async fn main() -> Result<()> {
             server::run_server(&vault).await
         }
         Commands::Index { vault, force } => {
+            let vault = resolve_vault(vault)?;
             use console::style;
             use std::io::Write;
 
@@ -144,6 +146,7 @@ async fn main() -> Result<()> {
             limit,
             json,
         } => {
+            let vault = resolve_vault(vault)?;
             tracing_subscriber::fmt()
                 .with_env_filter("vault_search_mcp=info")
                 .with_writer(std::io::stderr)
@@ -193,7 +196,67 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Detect the Obsidian vault path automatically.
+/// Resolve vault path from explicit argument, or auto-detect.
+/// Priority:
+/// 1. Explicit --vault argument (already handled by clap/env)
+/// 2. Walk up from CWD looking for `.vault-mcp/config.toml` (already initialized vault)
+/// 3. Global last-used vault from ~/.config/vault-search-mcp/state.json
+fn resolve_vault(explicit: Option<String>) -> Result<String> {
+    if let Some(v) = explicit {
+        return Ok(v);
+    }
+
+    // Walk up from CWD looking for an initialized vault (.vault-mcp/config.toml)
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = Some(cwd.as_path());
+        while let Some(d) = dir {
+            if d.join(".vault-mcp").join("config.toml").exists() {
+                return Ok(d.display().to_string());
+            }
+            dir = d.parent();
+        }
+    }
+
+    // Try global state (last vault used during init)
+    if let Some(path) = load_last_vault() {
+        return Ok(path);
+    }
+
+    anyhow::bail!(
+        "No vault specified. Either:\n\
+         \x20 • Run from inside a vault directory\n\
+         \x20 • Pass --vault <path>\n\
+         \x20 • Set VAULT_PATH env var\n\
+         \x20 • Run `vault-search-mcp init` first"
+    );
+}
+
+/// Load the last-used vault path from global state file.
+fn load_last_vault() -> Option<String> {
+    let state_path = global_state_path()?;
+    let content = std::fs::read_to_string(state_path).ok()?;
+    let state: serde_json::Value = serde_json::from_str(&content).ok()?;
+    state.get("vault_path")?.as_str().map(|s| s.to_string())
+}
+
+/// Save vault path to global state so subsequent commands auto-resolve it.
+fn save_last_vault(vault_path: &str) {
+    if let Some(state_path) = global_state_path() {
+        let state = serde_json::json!({ "vault_path": vault_path });
+        if let Some(parent) = state_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(state_path, state.to_string()).ok();
+    }
+}
+
+/// Path to global state: ~/.config/vault-search-mcp/state.json
+fn global_state_path() -> Option<std::path::PathBuf> {
+    directories::BaseDirs::new()
+        .map(|d| d.config_dir().join("vault-search-mcp").join("state.json"))
+}
+
+/// Detect the Obsidian vault path automatically (interactive, for `init` only).
 /// Strategy:
 /// 1. Walk up from CWD looking for a `.obsidian` directory
 /// 2. Recursively search common folders for `.obsidian` (max depth 4)
@@ -502,6 +565,7 @@ fn run_init(vault_path: &str) -> Result<()> {
     };
 
     Config::save_config_file(vault_path, &config_file)?;
+    save_last_vault(vault_path);
 
     let config_path = Config::config_path(vault_path);
     println!();
