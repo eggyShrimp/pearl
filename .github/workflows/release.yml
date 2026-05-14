@@ -15,16 +15,16 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-13
-            name: vault-search-mcp-x86_64-apple-darwin.tar.gz
+            name: vault-search-x86_64-apple-darwin.tar.gz
           - target: aarch64-apple-darwin
             os: macos-14
-            name: vault-search-mcp-aarch64-apple-darwin.tar.gz
+            name: vault-search-aarch64-apple-darwin.tar.gz
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            name: vault-search-mcp-x86_64-unknown-linux-gnu.tar.gz
+            name: vault-search-x86_64-unknown-linux-gnu.tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            name: vault-search-mcp-aarch64-unknown-linux-gnu.tar.gz
+            name: vault-search-aarch64-unknown-linux-gnu.tar.gz
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -48,7 +48,7 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.name }} vault-search-mcp
+          tar czf ../../../${{ matrix.name }} vault-search
           cd ../../..
 
       - name: Upload artifact
@@ -82,3 +82,36 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/checksums.txt
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Generate Homebrew formula
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+          ASSET_DIR: artifacts
+        run: |
+          .github/scripts/update-homebrew-formula.sh
+
+      - name: Push Homebrew formula
+        working-directory: homebrew-tap
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- Formula/vault-search.rb; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/vault-search.rb
+          git commit -m "Update vault-search to ${TAG_NAME}"
+          git push
