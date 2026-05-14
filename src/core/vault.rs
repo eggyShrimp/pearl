@@ -81,7 +81,8 @@ pub fn list_directory(vault_path: &Path, folder: &str, recursive: bool) -> Vec<D
                 !EXCLUDE_DIRS.contains(&name)
             })
             .flatten()
-            .skip(1) // skip the root dir itself
+            .skip(1)
+        // skip the root dir itself
         {
             let rel = entry
                 .path()
@@ -109,7 +110,11 @@ pub fn list_directory(vault_path: &Path, folder: &str, recursive: bool) -> Vec<D
                     .unwrap_or(&entry.path())
                     .to_string_lossy()
                     .to_string();
-                entries.push(DirEntry { name, is_dir, path: rel });
+                entries.push(DirEntry {
+                    name,
+                    is_dir,
+                    path: rel,
+                });
             }
         }
     }

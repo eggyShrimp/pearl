@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -32,7 +32,10 @@ struct OllamaModel {
     name: String,
 }
 
-/// Get embeddings for a batch of texts.
+/// Maximum number of concurrent HTTP requests to the embedding API.
+const MAX_CONCURRENCY: usize = 4;
+
+/// Get embeddings for a batch of texts (synchronous, used for single queries and health checks).
 pub fn get_embeddings(config: &EmbeddingConfig, texts: &[String]) -> Result<Vec<Vec<f32>>> {
     if texts.is_empty() {
         return Ok(vec![]);
@@ -71,6 +74,107 @@ pub fn get_embeddings(config: &EmbeddingConfig, texts: &[String]) -> Result<Vec<
     Ok(all_embeddings)
 }
 
+/// Get embeddings for a large batch of texts using async HTTP with concurrency.
+/// Splits texts into sub-batches and sends up to MAX_CONCURRENCY requests in parallel.
+pub async fn get_embeddings_async(
+    config: &EmbeddingConfig,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>> {
+    if texts.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let url = format!("{}/v1/embeddings", config.endpoint);
+    let auth_header = resolve_auth_header(config)?;
+    let batch_size = batch_size_for_provider(&config.provider);
+
+    // Split into sub-batches
+    let batches: Vec<&[String]> = texts.chunks(batch_size).collect();
+
+    if batches.len() == 1 {
+        // Single batch: no concurrency needed, avoid reqwest overhead
+        return get_embeddings(config, texts);
+    }
+
+    // Build async HTTP client
+    let mut client_builder =
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
+    // Disable TLS certificate verification for local endpoints (Ollama)
+    if config.provider == EmbeddingProvider::Ollama {
+        client_builder = client_builder.danger_accept_invalid_certs(true);
+    }
+    let client = client_builder
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    // Use a semaphore to limit concurrency
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENCY));
+    let mut handles = Vec::with_capacity(batches.len());
+
+    for (batch_idx, batch) in batches.iter().enumerate() {
+        let sem = semaphore.clone();
+        let client = client.clone();
+        let url = url.clone();
+        let auth = auth_header.clone();
+        let request_body = EmbeddingRequest {
+            model: config.model.clone(),
+            input: batch.to_vec(),
+            dimensions: config.dimensions,
+        };
+
+        let handle = tokio::spawn(async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| anyhow::anyhow!("Semaphore error: {}", e))?;
+
+            let mut req = client.post(&url).header("Content-Type", "application/json");
+
+            if let Some(ref auth) = auth {
+                req = req.header("Authorization", auth);
+            }
+
+            let response =
+                req.json(&request_body).send().await.with_context(|| {
+                    format!("Failed to call embedding API (batch {})", batch_idx)
+                })?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                bail!(
+                    "Embedding API returned {} (batch {}): {}",
+                    status,
+                    batch_idx,
+                    body.chars().take(200).collect::<String>()
+                );
+            }
+
+            let resp: EmbeddingResponse = response.json().await.with_context(|| {
+                format!("Failed to parse embedding response (batch {})", batch_idx)
+            })?;
+
+            let embeddings: Vec<Vec<f32>> = resp.data.into_iter().map(|d| d.embedding).collect();
+            Ok::<(usize, Vec<Vec<f32>>), anyhow::Error>((batch_idx, embeddings))
+        });
+
+        handles.push(handle);
+    }
+
+    // Collect results in order
+    let mut results: Vec<(usize, Vec<Vec<f32>>)> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let result = handle.await.context("Embedding task panicked")??;
+        results.push(result);
+    }
+
+    // Sort by batch index and flatten
+    results.sort_by_key(|(idx, _)| *idx);
+    let all_embeddings: Vec<Vec<f32>> = results.into_iter().flat_map(|(_, vecs)| vecs).collect();
+
+    Ok(all_embeddings)
+}
+
 /// Get embedding for a single query text.
 pub fn get_query_embedding(config: &EmbeddingConfig, text: &str) -> Result<Vec<f32>> {
     let results = get_embeddings(config, &[text.to_string()])?;
@@ -98,9 +202,7 @@ fn resolve_auth_header(config: &EmbeddingConfig) -> Result<Option<String>> {
         EmbeddingProvider::Openai | EmbeddingProvider::Custom => {
             if let Some(key) = config.resolve_api_key() {
                 if key.is_empty() {
-                    bail!(
-                        "API key is empty. Set the environment variable or update config.toml"
-                    );
+                    bail!("API key is empty. Set the environment variable or update config.toml");
                 }
                 Ok(Some(format!("Bearer {}", key)))
             } else {
@@ -118,10 +220,10 @@ fn resolve_auth_header(config: &EmbeddingConfig) -> Result<Option<String>> {
 }
 
 /// Determine optimal batch size per provider.
-fn batch_size_for_provider(provider: &EmbeddingProvider) -> usize {
+pub fn batch_size_for_provider(provider: &EmbeddingProvider) -> usize {
     match provider {
         EmbeddingProvider::Ollama => 32,
-        EmbeddingProvider::Openai => 100, // OpenAI supports up to 2048
+        EmbeddingProvider::Openai => 512, // OpenAI supports up to 2048
         EmbeddingProvider::Custom => 32,
     }
 }
@@ -163,7 +265,7 @@ fn check_api_health(config: &EmbeddingConfig) -> HealthStatus {
     // First check if API key is available
     if config.provider == EmbeddingProvider::Openai && config.resolve_api_key().is_none() {
         return HealthStatus::Unreachable(
-            "API key not configured. Run `vault-search-mcp init` or set OPENAI_API_KEY env var".into(),
+            "API key not configured. Run `vault-search init` or set OPENAI_API_KEY env var".into(),
         );
     }
 

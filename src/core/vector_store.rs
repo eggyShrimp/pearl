@@ -27,23 +27,41 @@ pub struct VectorIndex {
 }
 
 impl VectorIndex {
-    /// Load index from disk.
+    /// Load index from disk (bincode format, with JSON fallback for migration).
     pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
+        // Try bincode path first
+        let bin_path = Self::bin_path(path);
+        if bin_path.exists() {
+            let data = fs::read(&bin_path).context("Failed to read vector index (bincode)")?;
+            let index: VectorIndex =
+                bincode::deserialize(&data).context("Failed to deserialize vector index")?;
+            return Ok(index);
         }
-        let data = fs::read_to_string(path).context("Failed to read vector index")?;
-        let index: VectorIndex = serde_json::from_str(&data).context("Failed to parse vector index")?;
-        Ok(index)
+
+        // Fallback: try legacy JSON path
+        if path.exists() {
+            let data = fs::read_to_string(path).context("Failed to read vector index (json)")?;
+            let index: VectorIndex =
+                serde_json::from_str(&data).context("Failed to parse vector index (json)")?;
+            // Auto-migrate: save as bincode, remove old JSON
+            if let Ok(()) = index.save(path) {
+                // Remove legacy JSON file after successful migration
+                let _ = fs::remove_file(path);
+            }
+            return Ok(index);
+        }
+
+        Ok(Self::default())
     }
 
-    /// Save index to disk.
+    /// Save index to disk in bincode format.
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
+        let bin_path = Self::bin_path(path);
+        if let Some(parent) = bin_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let data = serde_json::to_string(self)?;
-        fs::write(path, data)?;
+        let data = bincode::serialize(self).context("Failed to serialize vector index")?;
+        fs::write(&bin_path, data)?;
         Ok(())
     }
 
@@ -89,6 +107,12 @@ impl VectorIndex {
                 score,
             })
             .collect()
+    }
+
+    /// Derive the bincode file path from the legacy JSON path.
+    /// `vectors.json` → `vectors.bin`
+    fn bin_path(json_path: &Path) -> std::path::PathBuf {
+        json_path.with_extension("bin")
     }
 }
 

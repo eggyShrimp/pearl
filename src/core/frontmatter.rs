@@ -113,7 +113,15 @@ fn extract_first_paragraph(lines: &[&str]) -> Option<String> {
     let text = paragraph.join(" ");
     // Truncate to ~250 chars
     Some(if text.len() > 250 {
-        format!("{}...", &text[..text.char_indices().take_while(|(i, _)| *i < 250).last().map(|(i, c)| i + c.len_utf8()).unwrap_or(250)])
+        format!(
+            "{}...",
+            &text[..text
+                .char_indices()
+                .take_while(|(i, _)| *i < 250)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(250)]
+        )
     } else {
         text
     })

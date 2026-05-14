@@ -44,6 +44,29 @@ pub async fn hybrid_search(
     Ok(merged)
 }
 
+/// Semantic-only search (vector similarity, no FTS).
+pub async fn vector_search_only(
+    vault_path: &str,
+    query: &str,
+    limit: usize,
+    folders: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+) -> Result<Vec<SearchResult>> {
+    let config = Config::new(vault_path);
+    let vector_index = VectorIndex::load(&config.vectors_path())?;
+    vector_search(&config, &vector_index, query, limit, &folders, &tags)
+}
+
+/// Full-text search only (keyword matching, no embeddings).
+pub async fn fts_search_only(
+    vault_path: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
+    let config = Config::new(vault_path);
+    fts_search(&config, query, limit)
+}
+
 fn vector_search(
     config: &Config,
     index: &VectorIndex,
@@ -71,7 +94,12 @@ fn vector_search(
             }
             // Tag filter
             if let Some(tags) = tags {
-                let item_tags: Vec<&str> = hit.metadata.tags.split(',').filter(|s| !s.is_empty()).collect();
+                let item_tags: Vec<&str> = hit
+                    .metadata
+                    .tags
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 if !tags.iter().all(|t| item_tags.contains(&t.as_str())) {
                     return false;
                 }
@@ -85,7 +113,13 @@ fn vector_search(
             score: hit.score,
             start_line: hit.metadata.start_line,
             end_line: hit.metadata.end_line,
-            tags: hit.metadata.tags.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+            tags: hit
+                .metadata
+                .tags
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect(),
             heading: hit.metadata.heading,
             match_type: "semantic".to_string(),
         })
@@ -124,10 +158,15 @@ fn merge_results(
     config: &Config,
     limit: usize,
 ) -> Vec<SearchResult> {
-    let mut merged: std::collections::HashMap<String, SearchResult> = std::collections::HashMap::new();
+    let mut merged: std::collections::HashMap<String, SearchResult> =
+        std::collections::HashMap::new();
 
     // Normalize FTS scores
-    let max_fts_score = fts_results.iter().map(|r| r.score).fold(0.0f32, f32::max).max(1.0);
+    let max_fts_score = fts_results
+        .iter()
+        .map(|r| r.score)
+        .fold(0.0f32, f32::max)
+        .max(1.0);
 
     // Add vector results
     for r in vector_results {
@@ -143,8 +182,8 @@ fn merge_results(
         let mut found_match = false;
         for (_, existing) in merged.iter_mut() {
             if existing.path == fts.path {
-                existing.score =
-                    config.search.vector_weight * existing.score + config.search.fts_weight * normalized_fts;
+                existing.score = config.search.vector_weight * existing.score
+                    + config.search.fts_weight * normalized_fts;
                 existing.match_type = "hybrid".to_string();
                 found_match = true;
             }
@@ -174,7 +213,11 @@ fn merge_results(
 
     // Sort and take top N
     let mut results: Vec<SearchResult> = merged.into_values().collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results.truncate(limit);
     results
 }

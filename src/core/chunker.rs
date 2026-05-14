@@ -59,7 +59,10 @@ pub fn chunk_markdown(body: &str, title: &str, max_tokens: usize) -> Vec<Chunk> 
 
             // Update heading stack
             let level_num = heading_level_to_num(level);
-            while heading_stack.last().is_some_and(|(l, _)| heading_level_to_num(*l) >= level_num) {
+            while heading_stack
+                .last()
+                .is_some_and(|(l, _)| heading_level_to_num(*l) >= level_num)
+            {
                 heading_stack.pop();
             }
             heading_stack.push((level, text.clone()));

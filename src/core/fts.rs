@@ -4,7 +4,7 @@ use anyhow::Result;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{doc, Index, IndexReader, IndexWriter, TantivyDocument};
+use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, doc};
 
 /// Full-text search engine backed by tantivy.
 pub struct FtsEngine {
@@ -46,6 +46,12 @@ impl FtsEngine {
         })
     }
 
+    /// Check if the FTS index has any documents.
+    pub fn has_documents(&self) -> Result<bool> {
+        let searcher = self.reader.searcher();
+        Ok(searcher.num_docs() > 0)
+    }
+
     /// Rebuild the entire FTS index from scratch.
     pub fn rebuild(&self, documents: Vec<FtsDocument>) -> Result<()> {
         let mut writer: IndexWriter = self.index.writer(50_000_000)?;
@@ -65,22 +71,51 @@ impl FtsEngine {
         Ok(())
     }
 
+    /// Incrementally update the FTS index: delete changed/removed docs, then add new versions.
+    pub fn update(&self, new_docs: Vec<FtsDocument>, deleted_paths: &[&str]) -> Result<()> {
+        let mut writer: IndexWriter = self.index.writer(50_000_000)?;
+
+        // Delete documents that were changed or removed (by path term)
+        for doc in &new_docs {
+            let term = tantivy::Term::from_field_text(self.path_field, &doc.path);
+            writer.delete_term(term);
+        }
+        for path in deleted_paths {
+            let term = tantivy::Term::from_field_text(self.path_field, path);
+            writer.delete_term(term);
+        }
+
+        // Add new/updated documents
+        for doc_data in new_docs {
+            writer.add_document(doc!(
+                self.path_field => doc_data.path,
+                self.title_field => doc_data.title,
+                self.body_field => doc_data.body,
+                self.tags_field => doc_data.tags,
+            ))?;
+        }
+
+        writer.commit()?;
+        self.reader.reload()?;
+        Ok(())
+    }
+
     /// Search the FTS index.
     pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<FtsHit>> {
         let searcher = self.reader.searcher();
-        let query_parser =
-            QueryParser::for_index(&self.index, vec![self.title_field, self.body_field, self.tags_field]);
+        let query_parser = QueryParser::for_index(
+            &self.index,
+            vec![self.title_field, self.body_field, self.tags_field],
+        );
 
         // Tantivy doesn't do well with CJK out of the box,
         // so we also try splitting query into individual characters for CJK
-        let query = query_parser
-            .parse_query(query_str)
-            .unwrap_or_else(|_| {
-                // Fallback: treat entire query as a phrase
-                query_parser
-                    .parse_query(&format!("\"{}\"", query_str))
-                    .unwrap_or_else(|_| Box::new(tantivy::query::AllQuery))
-            });
+        let query = query_parser.parse_query(query_str).unwrap_or_else(|_| {
+            // Fallback: treat entire query as a phrase
+            query_parser
+                .parse_query(&format!("\"{}\"", query_str))
+                .unwrap_or_else(|_| Box::new(tantivy::query::AllQuery))
+        });
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
 

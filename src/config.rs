@@ -105,12 +105,17 @@ pub struct SearchConfig {
 
 // ─── On-disk TOML representation ─────────────────────────────────────────────
 
-/// The structure of `{vault}/.vault-mcp/config.toml`.
+/// The structure of config.toml (both global and vault-local).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
+    /// Default vault path (primarily useful in global config).
+    #[serde(default)]
+    pub vault_path: Option<String>,
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub search: Option<SearchConfigFile>,
+    #[serde(default)]
+    pub index: Option<IndexConfigFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +123,11 @@ pub struct SearchConfigFile {
     pub vector_weight: Option<f32>,
     pub fts_weight: Option<f32>,
     pub default_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexConfigFile {
+    pub max_chunk_tokens: Option<usize>,
 }
 
 // ─── Directories to exclude from vault scanning ──────────────────────────────
@@ -134,15 +144,23 @@ pub const EXCLUDE_DIRS: &[&str] = &[
 // ─── Implementation ──────────────────────────────────────────────────────────
 
 impl Config {
-    /// Build config by loading from `{vault}/.vault-mcp/config.toml` if it exists,
-    /// falling back to environment variables, then hardcoded defaults.
+    /// Build config by loading from multiple sources (highest priority first):
+    /// 1. Environment variables
+    /// 2. Vault-local config: `{vault}/.vault-mcp/config.toml`
+    /// 3. Global user config: `~/.config/vault-search/config.toml`
+    /// 4. Hardcoded defaults
     pub fn new(vault_path: &str) -> Self {
         let vault = PathBuf::from(vault_path);
         let data_dir = vault.join(".vault-mcp");
-        let config_path = data_dir.join("config.toml");
+        let vault_config_path = data_dir.join("config.toml");
 
-        // Try loading config file
-        let file_config = Self::load_config_file(&config_path).ok();
+        // Try loading vault-local config, then global config, then merge
+        let vault_config = Self::load_config_file(&vault_config_path).ok();
+        let global_config =
+            Self::global_config_path().and_then(|p| Self::load_config_file(&p).ok());
+
+        // Merge: vault-local overrides global
+        let file_config = Self::merge_config_files(global_config, vault_config);
 
         let embedding = if let Some(ref fc) = file_config {
             let mut emb = fc.embedding.clone();
@@ -221,12 +239,18 @@ impl Config {
             }
         };
 
+        let max_chunk_tokens = file_config
+            .as_ref()
+            .and_then(|fc| fc.index.as_ref())
+            .and_then(|i| i.max_chunk_tokens)
+            .unwrap_or(400);
+
         Config {
             vault_path: vault,
             embedding,
             index: IndexConfig {
                 data_dir,
-                max_chunk_tokens: 400,
+                max_chunk_tokens,
             },
             search,
         }
@@ -240,7 +264,81 @@ impl Config {
         Ok(config)
     }
 
-    /// Save a ConfigFile to disk.
+    /// Merge two config files: vault-local overrides global.
+    /// If both are None, returns None.
+    fn merge_config_files(
+        global: Option<ConfigFile>,
+        vault_local: Option<ConfigFile>,
+    ) -> Option<ConfigFile> {
+        match (global, vault_local) {
+            (None, None) => None,
+            (Some(g), None) => Some(g),
+            (None, Some(v)) => Some(v),
+            (Some(g), Some(v)) => {
+                // Vault-local fully overrides global embedding config
+                // For search config, vault-local fields override global fields
+                let search = match (g.search, v.search) {
+                    (None, None) => None,
+                    (Some(gs), None) => Some(gs),
+                    (None, Some(vs)) => Some(vs),
+                    (Some(gs), Some(vs)) => Some(SearchConfigFile {
+                        vector_weight: vs.vector_weight.or(gs.vector_weight),
+                        fts_weight: vs.fts_weight.or(gs.fts_weight),
+                        default_limit: vs.default_limit.or(gs.default_limit),
+                    }),
+                };
+                let index = match (g.index, v.index) {
+                    (None, None) => None,
+                    (Some(gi), None) => Some(gi),
+                    (None, Some(vi)) => Some(vi),
+                    (Some(gi), Some(vi)) => Some(IndexConfigFile {
+                        max_chunk_tokens: vi.max_chunk_tokens.or(gi.max_chunk_tokens),
+                    }),
+                };
+                Some(ConfigFile {
+                    vault_path: v.vault_path.or(g.vault_path),
+                    embedding: v.embedding,
+                    search,
+                    index,
+                })
+            }
+        }
+    }
+
+    /// Read vault_path from the global config file (if set).
+    pub fn global_vault_path() -> Option<String> {
+        Self::global_config_path()
+            .and_then(|p| Self::load_config_file(&p).ok())
+            .and_then(|c| c.vault_path)
+    }
+
+    /// Path to the global user config: `~/.config/vault-search/config.toml`
+    pub fn global_config_path() -> Option<PathBuf> {
+        directories::BaseDirs::new()
+            .map(|d| d.config_dir().join("vault-search").join("config.toml"))
+    }
+
+    /// Check if a global config file exists.
+    pub fn global_config_exists() -> bool {
+        Self::global_config_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    }
+
+    /// Save a ConfigFile to the global config path.
+    pub fn save_global_config_file(config: &ConfigFile) -> Result<()> {
+        let config_path =
+            Self::global_config_path().context("Cannot determine global config directory")?;
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let content = toml::to_string_pretty(config).context("Failed to serialize config")?;
+        fs::write(&config_path, &content)
+            .with_context(|| format!("Failed to write config to {}", config_path.display()))?;
+        Ok(())
+    }
+
+    /// Save a ConfigFile to the vault-local config path.
     pub fn save_config_file(vault_path: &str, config: &ConfigFile) -> Result<()> {
         let data_dir = PathBuf::from(vault_path).join(".vault-mcp");
         fs::create_dir_all(&data_dir)?;
@@ -259,7 +357,12 @@ impl Config {
         config_path.exists()
     }
 
-    /// Path to the config file.
+    /// Check if any usable config exists (vault-local or global).
+    pub fn any_config_exists(vault_path: &str) -> bool {
+        Self::config_exists(vault_path) || Self::global_config_exists()
+    }
+
+    /// Path to the vault-local config file.
     pub fn config_path(vault_path: &str) -> PathBuf {
         PathBuf::from(vault_path)
             .join(".vault-mcp")
