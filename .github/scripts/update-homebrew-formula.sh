@@ -11,7 +11,6 @@ BASE_URL="${BASE_URL:-https://github.com/${REPOSITORY}/releases/download/${TAG_N
 
 ASSETS=(
   "vault-search-aarch64-apple-darwin.tar.gz"
-  "vault-search-x86_64-apple-darwin.tar.gz"
   "vault-search-aarch64-unknown-linux-gnu.tar.gz"
   "vault-search-x86_64-unknown-linux-gnu.tar.gz"
 )
@@ -53,7 +52,6 @@ for asset in "${ASSETS[@]}"; do
 done
 
 sha_macos_arm="$(sha256 "${WORKDIR}/vault-search-aarch64-apple-darwin.tar.gz")"
-sha_macos_intel="$(sha256 "${WORKDIR}/vault-search-x86_64-apple-darwin.tar.gz")"
 sha_linux_arm="$(sha256 "${WORKDIR}/vault-search-aarch64-unknown-linux-gnu.tar.gz")"
 sha_linux_intel="$(sha256 "${WORKDIR}/vault-search-x86_64-unknown-linux-gnu.tar.gz")"
 
@@ -72,11 +70,6 @@ class VaultSearch < Formula
     on_arm do
       url "${BASE_URL}/vault-search-aarch64-apple-darwin.tar.gz"
       sha256 "${sha_macos_arm}"
-    end
-
-    on_intel do
-      url "${BASE_URL}/vault-search-x86_64-apple-darwin.tar.gz"
-      sha256 "${sha_macos_intel}"
     end
   end
 

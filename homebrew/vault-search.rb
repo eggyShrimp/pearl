@@ -22,10 +22,6 @@ class VaultSearch < Formula
       url "https://github.com/eggyShrimp/vault-search/releases/download/v#{version}/vault-search-aarch64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER_SHA256"
     end
-    on_intel do
-      url "https://github.com/eggyShrimp/vault-search/releases/download/v#{version}/vault-search-x86_64-apple-darwin.tar.gz"
-      sha256 "PLACEHOLDER_SHA256"
-    end
   end
 
   on_linux do
