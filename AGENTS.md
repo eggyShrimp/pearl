@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**vault-search-mcp** is a local-first semantic search MCP server for Obsidian vaults, written in Rust. It provides hybrid search (vector + full-text) over markdown notes, exposed via the Model Context Protocol (stdio transport) for use by AI agents and code editors.
+**vault-search** is a local-first semantic search MCP server for Obsidian vaults, written in Rust. It provides hybrid search (vector + full-text) over markdown notes, exposed via the Model Context Protocol (stdio transport) for use by AI agents and code editors.
 
 ## Architecture
 
@@ -34,23 +34,23 @@ src/
 
 ```bash
 cargo build --release
-# Binary at: target/release/vault-search-mcp
+# Binary at: target/release/vault-search
 ```
 
 ## Running
 
 ```bash
 # Interactive setup
-vault-search-mcp init
+vault-search init
 
 # Index vault
-vault-search-mcp index --vault /path/to/vault
+vault-search index --vault /path/to/vault
 
 # Start MCP server
-vault-search-mcp serve --vault /path/to/vault
+vault-search serve --vault /path/to/vault
 
 # CLI search (for testing)
-vault-search-mcp search --vault /path/to/vault "query"
+vault-search search --vault /path/to/vault "query"
 ```
 
 ## Configuration
@@ -92,10 +92,10 @@ Environment variables (override config file):
 
 ```bash
 # Quick search test
-vault-search-mcp search --vault ~/my-vault "some query"
+vault-search search --vault ~/my-vault "some query"
 
 # Check embedding service connectivity
-vault-search-mcp serve --vault ~/my-vault
+vault-search serve --vault ~/my-vault
 # Then send vault_status via MCP
 ```
 

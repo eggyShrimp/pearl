@@ -20,36 +20,37 @@ use crate::core::vault;
 use crate::indexer;
 use crate::search;
 
+/// Single unified tool parameter. The `command` field determines the operation.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct SearchParams {
-    /// Natural language search query
-    query: String,
-    /// Max results to return (default 10)
-    limit: Option<usize>,
-    /// Limit search to these folders, e.g. ["wiki/", "raw/"]
-    folders: Option<Vec<String>>,
-    /// Filter by tags (AND logic), e.g. ["ai", "tech"]
-    tags: Option<Vec<String>>,
-}
+struct VaultSearchParams {
+    /// Command to execute: "search", "index", "get", "list", "status"
+    command: String,
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct IndexParams {
-    /// Force full reindex (ignore cached hashes)
+    // ── search params ──
+    /// Natural language search query (required for "search")
+    query: Option<String>,
+    /// Max results to return (default 10, for "search")
+    limit: Option<usize>,
+    /// Limit search to these folders, e.g. ["wiki/", "raw/"] (for "search")
+    folders: Option<Vec<String>>,
+    /// Filter by tags (AND logic), e.g. ["ai", "tech"] (for "search")
+    tags: Option<Vec<String>>,
+    /// Search mode: "hybrid" (default), "semantic", "fts" (for "search")
+    mode: Option<String>,
+
+    // ── index params ──
+    /// Force full reindex, ignoring cached hashes (for "index")
     #[serde(default)]
     force: bool,
-}
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GetNoteParams {
-    /// Relative path from vault root, e.g. "wiki/topics/RAG.md"
-    path: String,
-}
+    // ── get params ──
+    /// Relative path from vault root, e.g. "wiki/topics/RAG.md" (for "get")
+    path: Option<String>,
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ListNotesParams {
-    /// Directory to list (default: vault root)
+    // ── list params ──
+    /// Directory to list (for "list", default: vault root)
     folder: Option<String>,
-    /// List recursively (default: false)
+    /// List recursively (for "list", default: false)
     #[serde(default)]
     recursive: bool,
 }
@@ -61,32 +62,72 @@ struct VaultServer {
 
 #[tool_router(server_handler)]
 impl VaultServer {
-    /// Search vault using hybrid semantic + full-text search. Returns ranked chunks with context.
+    /// Unified vault search tool. Use the `command` parameter to specify the operation:
+    ///
+    /// - "search" — Hybrid semantic + full-text search. Params: query (required), mode, limit, folders, tags
+    /// - "index" — Build/rebuild the search index. Params: force (bool)
+    /// - "get" — Read a note by relative path. Params: path (required)
+    /// - "list" — List files/directories. Params: folder, recursive
+    /// - "status" — Check system health and configuration
     #[tool(
-        description = "Search vault using hybrid semantic + full-text search. Returns ranked chunks with context."
+        description = "Unified vault search tool. Commands: 'search' (hybrid semantic+full-text, params: query, mode, limit, folders, tags), 'index' (rebuild index, params: force), 'get' (read note, params: path), 'list' (list files, params: folder, recursive), 'status' (health check)"
     )]
-    async fn hybrid_search(&self, Parameters(params): Parameters<SearchParams>) -> String {
+    async fn vault_search(&self, Parameters(params): Parameters<VaultSearchParams>) -> String {
+        match params.command.as_str() {
+            "search" => self.handle_search(params).await,
+            "index" => self.handle_index(params).await,
+            "get" => self.handle_get(params),
+            "list" => self.handle_list(params),
+            "status" => self.handle_status(),
+            other => format!(
+                "Unknown command: '{}'. Supported: search, index, get, list, status",
+                other
+            ),
+        }
+    }
+}
+
+impl VaultServer {
+    async fn handle_search(&self, params: VaultSearchParams) -> String {
+        let query = match params.query {
+            Some(q) if !q.is_empty() => q,
+            _ => return "Error: 'query' is required for search command".to_string(),
+        };
         let limit = params.limit.unwrap_or(10);
-        match search::hybrid_search(
-            &self.vault_path,
-            &params.query,
-            limit,
-            params.folders,
-            params.tags,
-        )
-        .await
-        {
+        let mode = params.mode.as_deref().unwrap_or("hybrid");
+
+        let result = match mode {
+            "hybrid" => {
+                search::hybrid_search(&self.vault_path, &query, limit, params.folders, params.tags)
+                    .await
+            }
+            "semantic" => {
+                search::vector_search_only(
+                    &self.vault_path,
+                    &query,
+                    limit,
+                    params.folders,
+                    params.tags,
+                )
+                .await
+            }
+            "fts" => search::fts_search_only(&self.vault_path, &query, limit).await,
+            _ => {
+                return format!(
+                    "Unknown search mode: '{}'. Supported: hybrid, semantic, fts",
+                    mode
+                )
+            }
+        };
+
+        match result {
             Ok(results) => serde_json::to_string_pretty(&results)
                 .unwrap_or_else(|e| format!("Serialization error: {}", e)),
             Err(e) => format!("Search error: {}", e),
         }
     }
 
-    /// Index or reindex the vault for semantic search. Uses incremental hashing by default.
-    #[tool(
-        description = "Index or reindex the vault for semantic search. Uses incremental hashing by default."
-    )]
-    async fn index_vault(&self, Parameters(params): Parameters<IndexParams>) -> String {
+    async fn handle_index(&self, params: VaultSearchParams) -> String {
         match indexer::index_vault(&self.vault_path, params.force).await {
             Ok(stats) => format!(
                 "Indexing complete:\n  Total files: {}\n  Indexed: {}\n  Skipped (unchanged): {}\n  Deleted: {}\n  Total chunks: {}",
@@ -96,21 +137,19 @@ impl VaultServer {
         }
     }
 
-    /// Read a vault note by its relative path. Returns full markdown content.
-    #[tool(description = "Read a vault note by its relative path. Returns full markdown content.")]
-    fn get_note(&self, Parameters(params): Parameters<GetNoteParams>) -> String {
+    fn handle_get(&self, params: VaultSearchParams) -> String {
+        let path = match params.path {
+            Some(p) if !p.is_empty() => p,
+            _ => return "Error: 'path' is required for get command".to_string(),
+        };
         let config = Config::new(&self.vault_path);
-        match vault::read_vault_file(&config.vault_path, &params.path) {
+        match vault::read_vault_file(&config.vault_path, &path) {
             Ok(content) => content,
             Err(e) => format!("Error reading note: {}", e),
         }
     }
 
-    /// List files and directories in the vault. Use for navigation and discovery.
-    #[tool(
-        description = "List files and directories in the vault. Use for navigation and discovery."
-    )]
-    fn list_notes(&self, Parameters(params): Parameters<ListNotesParams>) -> String {
+    fn handle_list(&self, params: VaultSearchParams) -> String {
         let config = Config::new(&self.vault_path);
         let folder = params.folder.unwrap_or_default();
         let entries = vault::list_directory(&config.vault_path, &folder, params.recursive);
@@ -127,11 +166,7 @@ impl VaultServer {
         format!("{} entries:\n{}", entries.len(), formatted.join("\n"))
     }
 
-    /// Check vault-mcp health: embedding service connectivity, model availability, vault stats.
-    #[tool(
-        description = "Check vault-mcp health: embedding service connectivity, model availability, vault stats."
-    )]
-    fn vault_status(&self) -> String {
+    fn handle_status(&self) -> String {
         let config = Config::new(&self.vault_path);
         let health = embedder::check_health(&config.embedding);
         let api_key_status = match config.embedding.resolve_api_key() {
