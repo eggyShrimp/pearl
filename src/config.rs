@@ -147,7 +147,7 @@ impl Config {
     /// Build config by loading from multiple sources (highest priority first):
     /// 1. Environment variables
     /// 2. Vault-local config: `{vault}/.vault-mcp/config.toml`
-    /// 3. Global user config: `~/.config/vault-search/config.toml`
+    /// 3. Global user config: `~/.config/pearl/config.toml`
     /// 4. Hardcoded defaults
     pub fn new(vault_path: &str) -> Self {
         let vault = PathBuf::from(vault_path);
@@ -312,10 +312,10 @@ impl Config {
             .and_then(|c| c.vault_path)
     }
 
-    /// Path to the global user config: `~/.config/vault-search/config.toml`
+    /// Path to the global user config: `~/.config/pearl/config.toml`
     pub fn global_config_path() -> Option<PathBuf> {
         directories::BaseDirs::new()
-            .map(|d| d.config_dir().join("vault-search").join("config.toml"))
+            .map(|d| d.config_dir().join("pearl").join("config.toml"))
     }
 
     /// Check if a global config file exists.

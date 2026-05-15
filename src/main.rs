@@ -21,21 +21,31 @@ enum SearchMode {
     Fts,
 }
 
+const PEARL_LOGO: &str = r#"
+                           __
+    ____  ___  ____ ______/ /
+   / __ \/ _ \/ __ `/ ___/ / 
+  / /_/ /  __/ /_/ / /  / /  
+ / .___/\___/\__,_/_/  /_/   
+/_/                          
+"#;
+
 #[derive(Parser)]
 #[command(
-    name = "vault-search",
+    name = "pearl",
     version,
     about = "Semantic search for Obsidian vaults, exposed as an MCP server for AI agents.",
-    long_about = "vault-search provides hybrid semantic + full-text search over your Obsidian vault.\n\n\
+    before_long_help = PEARL_LOGO,
+    long_about = "pearl provides hybrid semantic + full-text search over your Obsidian vault.\n\n\
         It embeds your notes using a local (Ollama) or cloud (OpenAI) model, stores vectors\n\
         alongside your vault, and serves search results via the Model Context Protocol (MCP)\n\
         for AI coding agents like Claude Desktop, Cursor, or OpenCode.\n\n\
         Quick start:\n\
-        \x20 1. vault-search init              # configure embedding provider\n\
-        \x20 2. vault-search index             # build the search index\n\
-        \x20 3. vault-search serve             # start MCP server for your agent\n\n\
+        \x20 1. pearl init              # configure embedding provider\n\
+        \x20 2. pearl index             # build the search index\n\
+        \x20 3. pearl serve             # start MCP server for your agent\n\n\
         All index data is stored locally in {vault}/.vault-mcp/.",
-    after_help = "Documentation: https://github.com/eggyShrimp/vault-search"
+    after_help = "Documentation: https://github.com/eggyShrimp/pearl"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -46,7 +56,7 @@ struct Cli {
 enum Commands {
     /// Start the MCP server for AI agents to connect to.
     ///
-    /// Exposes a single `vault_search` tool with commands: search, index, get, list, status.
+    /// Exposes a single `pearl` tool with commands: search, index, get, list, status.
     /// By default uses stdio transport (JSON-RPC over stdin/stdout).
     /// Use --network to expose the server over HTTP (Streamable HTTP transport)
     /// for LAN access by other devices.
@@ -136,18 +146,18 @@ enum Commands {
     /// Interactive setup wizard — configure embedding provider and generate config.
     ///
     /// By default writes to {vault}/.vault-mcp/config.toml.
-    /// Use --global to write to ~/.config/vault-search/config.toml instead,
+    /// Use --global to write to ~/.config/pearl/config.toml instead,
     /// which serves as the default config for all vaults.
     Init {
         /// Path to the Obsidian vault (auto-detected if omitted)
         #[arg(short, long, env = "VAULT_PATH")]
         vault: Option<String>,
-        /// Write config to global path (~/.config/vault-search/config.toml) instead of vault-local
+        /// Write config to global path (~/.config/pearl/config.toml) instead of vault-local
         #[arg(short, long, default_value_t = false)]
         global: bool,
     },
 
-    /// Install vault-search as a tool/skill into AI coding agents.
+    /// Install pearl as a tool/skill into AI coding agents.
     ///
     /// Generates MCP server config and skill/rules files for the selected
     /// agent products (Cursor, Claude Code, Trae, Windsurf, OpenCode, Codex).
@@ -180,7 +190,7 @@ async fn main() -> Result<()> {
             let vault = resolve_vault(vault)?;
             // In serve mode, only log to stderr (stdout is MCP transport)
             tracing_subscriber::fmt()
-                .with_env_filter("vault_search_mcp=info")
+                .with_env_filter("pearl=info")
                 .with_writer(std::io::stderr)
                 .init();
             watch::ensure_watch_running(&vault);
@@ -195,7 +205,7 @@ async fn main() -> Result<()> {
             use std::io::Write;
 
             tracing_subscriber::fmt()
-                .with_env_filter("vault_search_mcp=info")
+                .with_env_filter("pearl=info")
                 .with_writer(std::io::stderr)
                 .init();
 
@@ -223,7 +233,7 @@ async fn main() -> Result<()> {
                         eprintln!("  Check your embedding endpoint and API key configuration.");
                         eprintln!(
                             "  Run {} to reconfigure.",
-                            style("vault-search init").bold()
+                            style("pearl init").bold()
                         );
                     }
                     eprintln!();
@@ -285,7 +295,7 @@ async fn main() -> Result<()> {
         } => {
             let vault = resolve_vault(vault)?;
             tracing_subscriber::fmt()
-                .with_env_filter("vault_search_mcp=info")
+                .with_env_filter("pearl=info")
                 .with_writer(std::io::stderr)
                 .init();
             let folders = if folder.is_empty() {
@@ -427,7 +437,7 @@ async fn main() -> Result<()> {
         } => {
             let vault = resolve_vault(vault)?;
             tracing_subscriber::fmt()
-                .with_env_filter("vault_search_mcp=info")
+                .with_env_filter("pearl=info")
                 .with_writer(std::io::stderr)
                 .init();
 
@@ -494,7 +504,7 @@ async fn main() -> Result<()> {
 
 // ─── Vault Resolution ────────────────────────────────────────────────────────
 
-/// Global state persisted at ~/.config/vault-search/state.json.
+/// Global state persisted at ~/.config/pearl/state.json.
 /// Supports multiple registered vaults with a default.
 ///
 /// Format:
@@ -522,7 +532,7 @@ struct GlobalState {
 /// 1. Explicit --vault argument (already handled by clap/env)
 /// 2. Walk up from CWD looking for `.vault-mcp/config.toml` (already initialized vault)
 /// 3. Walk up from CWD looking for `.obsidian` dir (vault without local config — uses global config)
-/// 4. Default vault from global state (~/.config/vault-search/state.json)
+/// 4. Default vault from global state (~/.config/pearl/state.json)
 fn resolve_vault(explicit: Option<String>) -> Result<String> {
     if let Some(v) = explicit {
         return Ok(v);
@@ -552,7 +562,7 @@ fn resolve_vault(explicit: Option<String>) -> Result<String> {
         }
     }
 
-    // Try vault_path from global config (~/.config/vault-search/config.toml)
+    // Try vault_path from global config (~/.config/pearl/config.toml)
     if let Some(path) = config::Config::global_vault_path() {
         return Ok(path);
     }
@@ -568,7 +578,7 @@ fn resolve_vault(explicit: Option<String>) -> Result<String> {
          \x20 • Run from inside a vault directory\n\
          \x20 • Pass --vault <path>\n\
          \x20 • Set VAULT_PATH env var\n\
-         \x20 • Run `vault-search init` first"
+         \x20 • Run `pearl init` first"
     );
 }
 
@@ -609,9 +619,9 @@ fn register_vault(vault_path: &str) {
     save_global_state(&state);
 }
 
-/// Path to global state: ~/.config/vault-search/state.json
+/// Path to global state: ~/.config/pearl/state.json
 fn global_state_path() -> Option<std::path::PathBuf> {
-    directories::BaseDirs::new().map(|d| d.config_dir().join("vault-search").join("state.json"))
+    directories::BaseDirs::new().map(|d| d.config_dir().join("pearl").join("state.json"))
 }
 
 /// Detect the Obsidian vault path automatically (interactive, for `init` only).
@@ -620,11 +630,8 @@ fn global_state_path() -> Option<std::path::PathBuf> {
 /// 2. Recursively search common folders for `.obsidian` (max depth 4)
 /// 3. If multiple found, let user choose; if none found, ask for manual input
 fn detect_vault() -> Result<String> {
-    use console::style;
-    use dialoguer::{Input, Select, theme::ColorfulTheme};
     use walkdir::WalkDir;
 
-    let theme = ColorfulTheme::default();
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
     // Strategy 1: Walk up from CWD
@@ -678,60 +685,34 @@ fn detect_vault() -> Result<String> {
 
     match candidates.len() {
         0 => {
-            eprintln!(
-                "  {} No Obsidian vaults found on this machine.",
-                style("⚠").yellow().bold()
-            );
-            eprintln!();
-            eprintln!("  vault-search works with any folder of markdown files.");
-            eprintln!("  If you don't have Obsidian yet:");
-            eprintln!();
-            eprintln!(
-                "    • Download: {}",
-                style("https://obsidian.md/download").underlined()
-            );
-            eprintln!("    • Or point to any folder containing .md files");
-            eprintln!();
-            let path: String = Input::with_theme(&theme)
-                .with_prompt("  Vault / markdown folder path")
-                .interact_text()?;
+            cliclack::log::warning("No Obsidian vaults found on this machine.")?;
+            let path: String = cliclack::input("Vault / markdown folder path")
+                .placeholder("/path/to/your/vault")
+                .interact()?;
             Ok(path)
         }
         1 => {
             let path = candidates[0].display().to_string();
-            eprintln!(
-                "  {}  Found vault: {}",
-                style("✓").green().bold(),
-                style(&path).underlined()
-            );
-            println!();
-            let confirm = dialoguer::Confirm::with_theme(&theme)
-                .with_prompt("  Use this vault?")
-                .default(true)
+            let confirm: bool = cliclack::confirm(format!("Use vault: {}?", &path))
+                .initial_value(true)
                 .interact()?;
             if confirm {
                 Ok(path)
             } else {
-                let path: String = Input::with_theme(&theme)
-                    .with_prompt("  Vault path")
-                    .interact_text()?;
+                let path: String = cliclack::input("Vault path")
+                    .placeholder("/path/to/your/vault")
+                    .interact()?;
                 Ok(path)
             }
         }
         _ => {
-            eprintln!(
-                "  {}  Found {} vaults:",
-                style("✓").green().bold(),
-                candidates.len()
-            );
-            println!();
-            let items: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
-            let selection = Select::with_theme(&theme)
-                .with_prompt("  Select vault")
-                .items(&items)
-                .default(0)
-                .interact()?;
-            Ok(items[selection].clone())
+            let mut select = cliclack::select("Select vault");
+            for (i, c) in candidates.iter().enumerate() {
+                let label = c.display().to_string();
+                select = select.item(i, &label, "");
+            }
+            let selection: usize = select.interact()?;
+            Ok(candidates[selection].display().to_string())
         }
     }
 }
@@ -744,45 +725,21 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 /// Interactively collect embedding provider configuration.
 fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
     use config::{EmbeddingConfig, EmbeddingProvider};
-    use console::style;
-    use dialoguer::{Input, Select, theme::ColorfulTheme};
-
-    let theme = ColorfulTheme::default();
 
     // ── Step 1: Provider ────────────────────────────────────────────────
-    println!(
-        "  {} {}",
-        style("[1/2]").dim(),
-        style("Embedding Provider").bold()
-    );
-    println!();
-
-    let providers = &[
-        "Ollama          local, free, private",
-        "OpenAI          cloud API, high quality",
-        "Custom          any OpenAI-compatible endpoint",
-    ];
-    let selection = Select::with_theme(&theme)
-        .with_prompt("  Provider")
-        .items(providers)
-        .default(0)
+    let provider: &str = cliclack::select("Embedding provider")
+        .item("ollama", "Ollama", "local, free, private")
+        .item("openai", "OpenAI", "cloud API, high quality")
+        .item("custom", "Custom", "any OpenAI-compatible endpoint")
         .interact()?;
 
-    let provider = match selection {
-        0 => EmbeddingProvider::Ollama,
-        1 => EmbeddingProvider::Openai,
+    let provider = match provider {
+        "ollama" => EmbeddingProvider::Ollama,
+        "openai" => EmbeddingProvider::Openai,
         _ => EmbeddingProvider::Custom,
     };
 
     // ── Step 2: Provider-specific config ────────────────────────────────
-    println!();
-    println!(
-        "  {} {}",
-        style("[2/2]").dim(),
-        style("Connection Details").bold()
-    );
-    println!();
-
     let embedding_config = match provider {
         EmbeddingProvider::Ollama => {
             // Auto-detect Ollama endpoint
@@ -793,42 +750,23 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
                 .unwrap_or_else(|| "http://localhost:11434".into());
 
             if detected.is_some() {
-                eprintln!(
-                    "  {}  Auto-detected Ollama at {}",
-                    style("✓").green().bold(),
-                    style(&default_endpoint).underlined()
-                );
+                cliclack::log::success(format!(
+                    "Auto-detected Ollama at {}",
+                    &default_endpoint
+                ))?;
             } else {
-                eprintln!();
-                eprintln!(
-                    "  {} Ollama is not running or not installed.",
-                    style("⚠").yellow().bold()
-                );
-                eprintln!("  To use local embeddings, you need Ollama:");
-                eprintln!();
-                eprintln!(
-                    "    1. Install:  {}",
-                    style("https://ollama.com/download").underlined()
-                );
-                eprintln!("    2. Start:    {}", style("ollama serve").bold());
-                eprintln!("    3. Pull model: {}", style("ollama pull bge-m3").bold());
-                eprintln!();
-                eprintln!(
-                    "  You can continue setup now and start Ollama before running {}.",
-                    style("index").bold()
-                );
-                eprintln!();
+                cliclack::log::warning(
+                    "Ollama is not running. Install: https://ollama.com/download",
+                )?;
             }
 
-            let endpoint: String = Input::with_theme(&theme)
-                .with_prompt("  Endpoint")
-                .default(default_endpoint)
-                .interact_text()?;
+            let endpoint: String = cliclack::input("Endpoint")
+                .default_input(&default_endpoint)
+                .interact()?;
 
-            let model: String = Input::with_theme(&theme)
-                .with_prompt("  Model")
-                .default("bge-m3".into())
-                .interact_text()?;
+            let model: String = cliclack::input("Model")
+                .default_input("bge-m3")
+                .interact()?;
 
             // Verify model availability if Ollama is reachable
             let tmp_config = EmbeddingConfig {
@@ -841,24 +779,16 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
             let health = crate::core::embedder::check_health(&tmp_config);
             match &health {
                 crate::core::embedder::HealthStatus::Ok => {
-                    eprintln!(
-                        "  {}  Ollama is running, model '{}' is available.",
-                        style("✓").green().bold(),
+                    cliclack::log::success(format!(
+                        "Ollama is running, model '{}' is available",
                         &model
-                    );
+                    ))?;
                 }
                 crate::core::embedder::HealthStatus::ModelMissing(_) => {
-                    eprintln!();
-                    eprintln!(
-                        "  {} Model '{}' is not pulled yet.",
-                        style("⚠").yellow().bold(),
-                        &model
-                    );
-                    eprintln!(
-                        "    Run: {}",
-                        style(format!("ollama pull {}", &model)).bold()
-                    );
-                    eprintln!();
+                    cliclack::log::warning(format!(
+                        "Model '{}' not pulled yet. Run: ollama pull {}",
+                        &model, &model
+                    ))?;
                 }
                 crate::core::embedder::HealthStatus::Unreachable(_) => {
                     // Already warned above
@@ -868,135 +798,119 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
             tmp_config
         }
         EmbeddingProvider::Openai => {
-            let model: String = Input::with_theme(&theme)
-                .with_prompt("  Model")
-                .default("text-embedding-3-small".into())
-                .interact_text()?;
-
-            let api_key_source = Select::with_theme(&theme)
-                .with_prompt("  API key source")
-                .items(&["Read from $OPENAI_API_KEY env var", "Enter key now"])
-                .default(0)
+            let model: String = cliclack::input("Model")
+                .default_input("text-embedding-3-small")
                 .interact()?;
 
-            let api_key = if api_key_source == 0 {
+            let key_source: &str = cliclack::select("API key source")
+                .item("env", "Read from $OPENAI_API_KEY env var", "")
+                .item("direct", "Enter key now", "")
+                .interact()?;
+
+            let api_key = if key_source == "env" {
                 "$OPENAI_API_KEY".to_string()
             } else {
-                Input::with_theme(&theme)
-                    .with_prompt("  API key")
-                    .interact_text()?
+                cliclack::input("API key").interact()?
             };
 
-            let dimensions: String = Input::with_theme(&theme)
-                .with_prompt("  Dimensions (enter to skip)")
-                .default("".into())
-                .allow_empty(true)
-                .interact_text()?;
+            let dimensions: String = cliclack::input("Dimensions (empty to skip)")
+                .default_input("")
+                .interact()?;
 
             let tmp_config = EmbeddingConfig {
                 provider: EmbeddingProvider::Openai,
                 endpoint: "https://api.openai.com".into(),
                 model,
                 api_key: Some(api_key),
-                dimensions: dimensions.parse().ok(),
+                dimensions: if dimensions.is_empty() {
+                    None
+                } else {
+                    dimensions.parse().ok()
+                },
             };
 
             // Verify API key connectivity
             let health = crate::core::embedder::check_health(&tmp_config);
             match &health {
                 crate::core::embedder::HealthStatus::Ok => {
-                    eprintln!(
-                        "  {}  API key verified, model '{}' is accessible.",
-                        style("✓").green().bold(),
+                    cliclack::log::success(format!(
+                        "API key verified, model '{}' is accessible",
                         &tmp_config.model
-                    );
+                    ))?;
                 }
                 crate::core::embedder::HealthStatus::Unreachable(msg) => {
-                    eprintln!();
-                    eprintln!("  {} {}", style("⚠").yellow().bold(), msg);
-                    eprintln!("    Check your API key and network connectivity.");
-                    eprintln!();
+                    cliclack::log::warning(format!("{}\n  Check your API key and network.", msg))?;
                 }
                 crate::core::embedder::HealthStatus::ModelMissing(msg) => {
-                    eprintln!();
-                    eprintln!("  {} {}", style("⚠").yellow().bold(), msg);
-                    eprintln!();
+                    cliclack::log::warning(msg)?;
                 }
             }
 
             tmp_config
         }
         EmbeddingProvider::Custom => {
-            let endpoint: String = Input::with_theme(&theme)
-                .with_prompt("  Endpoint (must serve /v1/embeddings)")
-                .interact_text()?;
+            let endpoint: String = cliclack::input("Endpoint (must serve /v1/embeddings)")
+                .placeholder("http://localhost:8080")
+                .interact()?;
 
-            let model: String = Input::with_theme(&theme)
-                .with_prompt("  Model")
-                .interact_text()?;
+            let model: String = cliclack::input("Model").interact()?;
 
-            let needs_key = dialoguer::Confirm::with_theme(&theme)
-                .with_prompt("  Requires API key?")
-                .default(true)
+            let needs_key: bool = cliclack::confirm("Requires API key?")
+                .initial_value(true)
                 .interact()?;
 
             let api_key = if needs_key {
-                let key_source = Select::with_theme(&theme)
-                    .with_prompt("  API key source")
-                    .items(&["Read from env var", "Enter key now"])
-                    .default(0)
+                let key_source: &str = cliclack::select("API key source")
+                    .item("env", "Read from env var", "")
+                    .item("direct", "Enter key now", "")
                     .interact()?;
 
-                if key_source == 0 {
-                    let env_name: String = Input::with_theme(&theme)
-                        .with_prompt("  Env var name")
-                        .default("EMBEDDING_API_KEY".into())
-                        .interact_text()?;
+                if key_source == "env" {
+                    let env_name: String = cliclack::input("Env var name")
+                        .default_input("EMBEDDING_API_KEY")
+                        .interact()?;
                     Some(format!("${}", env_name))
                 } else {
-                    let key: String = Input::with_theme(&theme)
-                        .with_prompt("  API key")
-                        .interact_text()?;
+                    let key: String = cliclack::input("API key").interact()?;
                     Some(key)
                 }
             } else {
                 None
             };
 
-            let dimensions: String = Input::with_theme(&theme)
-                .with_prompt("  Dimensions (enter to skip)")
-                .default("".into())
-                .allow_empty(true)
-                .interact_text()?;
+            let dimensions: String = cliclack::input("Dimensions (empty to skip)")
+                .default_input("")
+                .interact()?;
 
             let tmp_config = EmbeddingConfig {
                 provider: EmbeddingProvider::Custom,
                 endpoint,
                 model,
                 api_key,
-                dimensions: dimensions.parse().ok(),
+                dimensions: if dimensions.is_empty() {
+                    None
+                } else {
+                    dimensions.parse().ok()
+                },
             };
 
             // Verify connectivity
             let health = crate::core::embedder::check_health(&tmp_config);
             match &health {
                 crate::core::embedder::HealthStatus::Ok => {
-                    eprintln!(
-                        "  {}  Endpoint verified, model '{}' is accessible.",
-                        style("✓").green().bold(),
+                    cliclack::log::success(format!(
+                        "Endpoint verified, model '{}' is accessible",
                         &tmp_config.model
-                    );
+                    ))?;
                 }
                 crate::core::embedder::HealthStatus::Unreachable(msg) => {
-                    eprintln!();
-                    eprintln!("  {} {}", style("⚠").yellow().bold(), msg);
-                    eprintln!("    Check your endpoint and API key configuration.");
-                    eprintln!();
+                    cliclack::log::warning(format!(
+                        "{}\n  Check your endpoint and API key.",
+                        msg
+                    ))?;
                 }
                 crate::core::embedder::HealthStatus::ModelMissing(msg) => {
-                    eprintln!();
-                    eprintln!("  {} {}", style("⚠").yellow().bold(), msg);
-                    eprintln!();
+                    cliclack::log::warning(msg)?;
                 }
             }
 
@@ -1010,32 +924,22 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
 /// Interactive onboarding: guide user to configure embedding provider (vault-local).
 fn run_init(vault_path: &str) -> Result<()> {
     use config::{Config, ConfigFile};
-    use console::style;
-    use dialoguer::theme::ColorfulTheme;
 
-    let theme = ColorfulTheme::default();
+    cliclack::clear_screen()?;
+    eprintln!("{}", PEARL_LOGO);
+    cliclack::intro("pearl · Setup")?;
 
-    println!();
-    println!("  {}", style("vault-search · Setup").bold());
-    println!("  {}", style("─".repeat(40)).dim());
-    println!("  Vault: {}", style(vault_path).cyan().underlined());
-    println!();
+    cliclack::log::info(format!("Vault: {}", vault_path))?;
 
     // Check if config already exists
     if Config::config_exists(vault_path) {
-        eprintln!(
-            "  {} Config file already exists.",
-            style("!").yellow().bold()
-        );
-        let overwrite = dialoguer::Confirm::with_theme(&theme)
-            .with_prompt("  Overwrite existing config?")
-            .default(false)
+        let overwrite: bool = cliclack::confirm("Config file already exists. Overwrite?")
+            .initial_value(false)
             .interact()?;
         if !overwrite {
-            println!("  Aborted.");
+            cliclack::outro("Aborted.")?;
             return Ok(());
         }
-        println!();
     }
 
     let embedding_config = prompt_embedding_config()?;
@@ -1051,56 +955,15 @@ fn run_init(vault_path: &str) -> Result<()> {
     Config::save_config_file(vault_path, &config_file)?;
     register_vault(vault_path);
 
-    let config_path = Config::config_path(vault_path);
-    println!();
-    println!("  {}", style("─".repeat(40)).dim());
-    println!("  {} Configuration saved!", style("✓").green().bold());
-    println!();
-    println!(
-        "  {}  {}",
-        style("provider").dim(),
-        embedding_config.provider
-    );
-    println!(
-        "  {}  {}",
-        style("endpoint").dim(),
-        embedding_config.endpoint
-    );
-    println!("  {}     {}", style("model").dim(), embedding_config.model);
-    println!(
-        "  {}    {}",
-        style("config").dim(),
-        style(config_path.display()).underlined()
-    );
+    cliclack::outro("Configuration saved!")?;
 
-    // Show global config info if it exists
-    if Config::global_config_exists() {
-        if let Some(global_path) = Config::global_config_path() {
-            println!(
-                "  {}    {}",
-                style("global").dim(),
-                style(global_path.display()).underlined()
-            );
-            println!(
-                "           {}",
-                style("(vault-local config overrides global)").dim()
-            );
-        }
-    }
+    // Show key config summary (outside cliclack TUI boundary)
+    let config = Config::new(vault_path);
+    print_config_summary(&config);
 
-    println!();
-    println!("  {}", style("Next steps:").bold());
-    println!();
-    println!(
-        "    {}  vault-search index --vault {}",
-        style("$").dim(),
-        vault_path
-    );
-    println!(
-        "    {}  vault-search serve --vault {}",
-        style("$").dim(),
-        vault_path
-    );
+    println!("  Next steps:");
+    println!("    $ pearl index --vault {}", vault_path);
+    println!("    $ pearl serve --vault {}", vault_path);
     println!();
 
     Ok(())
@@ -1117,14 +980,14 @@ const INSTALL_TARGETS: &[(&str, &str)] = &[
     ("codex", "Codex"),
 ];
 
-/// Description of vault-search's MCP capabilities (used in rules/skill files).
+/// Description of pearl's MCP capabilities (used in rules/skill files).
 const VAULT_SEARCH_SKILL_DESCRIPTION: &str = r#"When the user asks to search their notes, find related content, look up something
 in their Obsidian vault, or needs context from their knowledge base, use the
-vault-search MCP server tools.
+pearl MCP server tools.
 
-## vault-search tools
+## pearl tools
 
-- `vault_search` — Single tool with a `command` parameter. Commands:
+- `pearl` — Single tool with a `command` parameter. Commands:
   - `search` — Hybrid semantic + full-text search
     Params: query (required), mode (hybrid|semantic|fts), limit, folders, tags
   - `index` — Build/rebuild the search index
@@ -1143,25 +1006,25 @@ fn file_contains(path: &std::path::Path, needle: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Detect which editors already have vault-search installed.
+/// Detect which editors already have pearl installed.
 fn detect_installed_targets(cwd: &std::path::Path) -> Vec<&'static str> {
     let mut installed = Vec::new();
 
     // Cursor: .cursor/mcp.json
     let cursor_mcp = cwd.join(".cursor").join("mcp.json");
-    if file_contains(&cursor_mcp, "vault-search") {
+    if file_contains(&cursor_mcp, "pearl") {
         installed.push("cursor");
     }
 
     // Claude Code: .mcp.json
     let claude_mcp = cwd.join(".mcp.json");
-    if file_contains(&claude_mcp, "vault-search") {
+    if file_contains(&claude_mcp, "pearl") {
         installed.push("claude-code");
     }
 
     // Trae: .trae/mcp.json
     let trae_mcp = cwd.join(".trae").join("mcp.json");
-    if file_contains(&trae_mcp, "vault-search") {
+    if file_contains(&trae_mcp, "pearl") {
         installed.push("trae");
     }
 
@@ -1171,7 +1034,7 @@ fn detect_installed_targets(cwd: &std::path::Path) -> Vec<&'static str> {
             .join(".codeium")
             .join("windsurf")
             .join("mcp_config.json");
-        if file_contains(&windsurf_mcp, "vault-search") {
+        if file_contains(&windsurf_mcp, "pearl") {
             installed.push("windsurf");
         }
     }
@@ -1181,7 +1044,7 @@ fn detect_installed_targets(cwd: &std::path::Path) -> Vec<&'static str> {
         let opencode_skill = home
             .join(".opencode")
             .join("skills")
-            .join("vault-search")
+            .join("pearl")
             .join("SKILL.md");
         if opencode_skill.exists() {
             installed.push("opencode");
@@ -1191,7 +1054,7 @@ fn detect_installed_targets(cwd: &std::path::Path) -> Vec<&'static str> {
     // Codex: ~/.codex/config.toml
     if let Some(home) = dirs_home() {
         let codex_config = home.join(".codex").join("config.toml");
-        if file_contains(&codex_config, "mcp_servers.vault-search") {
+        if file_contains(&codex_config, "mcp_servers.pearl") {
             installed.push("codex");
         }
     }
@@ -1235,7 +1098,7 @@ fn write_mcp_config(path: &std::path::Path, bin_path: &str, typed: bool) -> Resu
     if config.get("mcpServers").is_none() {
         config["mcpServers"] = serde_json::json!({});
     }
-    config["mcpServers"]["vault-search"] = server_entry;
+    config["mcpServers"]["pearl"] = server_entry;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1244,50 +1107,42 @@ fn write_mcp_config(path: &std::path::Path, bin_path: &str, typed: bool) -> Resu
     Ok(())
 }
 
-/// Install into Cursor: .cursor/mcp.json + .cursor/rules/vault-search.mdc
+/// Install into Cursor: .cursor/mcp.json + .cursor/rules/pearl.mdc
 fn install_cursor(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
-
     let mcp_path = cwd.join(".cursor").join("mcp.json");
     write_mcp_config(&mcp_path, bin_path, false)?;
 
     let rules_dir = cwd.join(".cursor").join("rules");
     std::fs::create_dir_all(&rules_dir)?;
-    let rules_path = rules_dir.join("vault-search.mdc");
+    let rules_path = rules_dir.join("pearl.mdc");
     let content = format!(
-        "---\ndescription: Use vault-search for Obsidian knowledge base queries\nalwaysApply: false\n---\n{}",
+        "---\ndescription: Use pearl for Obsidian knowledge base queries\nalwaysApply: false\n---\n{}",
         VAULT_SEARCH_SKILL_DESCRIPTION
     );
     std::fs::write(&rules_path, content)?;
 
-    eprintln!(
-        "  {} Cursor: {} + {}",
-        style("✓").green().bold(),
+    cliclack::log::success(format!(
+        "Cursor: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        rules_path
-            .strip_prefix(cwd)
-            .unwrap_or(&rules_path)
-            .display(),
-    );
+        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+    ))?;
     Ok(())
 }
 
 /// Install into Claude Code: .mcp.json + CLAUDE.md
 fn install_claude_code(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
-
     let mcp_path = cwd.join(".mcp.json");
     write_mcp_config(&mcp_path, bin_path, true)?;
 
     let claude_md_path = cwd.join("CLAUDE.md");
     let section = format!(
-        "\n## vault-search — Obsidian Knowledge Base\n\n{}",
+        "\n## pearl — Obsidian Knowledge Base\n\n{}",
         VAULT_SEARCH_SKILL_DESCRIPTION
     );
 
     if claude_md_path.exists() {
         let existing = std::fs::read_to_string(&claude_md_path)?;
-        if !existing.contains("vault-search") {
+        if !existing.contains("pearl") {
             std::fs::write(&claude_md_path, format!("{}\n{}", existing.trim_end(), section))?;
         }
     } else {
@@ -1297,50 +1152,38 @@ fn install_claude_code(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
         )?;
     }
 
-    eprintln!(
-        "  {} Claude Code: {} + {}",
-        style("✓").green().bold(),
+    cliclack::log::success(format!(
+        "Claude Code: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        claude_md_path
-            .strip_prefix(cwd)
-            .unwrap_or(&claude_md_path)
-            .display(),
-    );
+        claude_md_path.strip_prefix(cwd).unwrap_or(&claude_md_path).display(),
+    ))?;
     Ok(())
 }
 
-/// Install into Trae: .trae/mcp.json + .trae/rules/vault-search.md
+/// Install into Trae: .trae/mcp.json + .trae/rules/pearl.md
 fn install_trae(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
-
     let mcp_path = cwd.join(".trae").join("mcp.json");
     write_mcp_config(&mcp_path, bin_path, false)?;
 
     let rules_dir = cwd.join(".trae").join("rules");
     std::fs::create_dir_all(&rules_dir)?;
-    let rules_path = rules_dir.join("vault-search.md");
+    let rules_path = rules_dir.join("pearl.md");
     let content = format!(
-        "---\ndescription: Use vault-search for Obsidian knowledge base queries\nalwaysApply: false\n---\n{}",
+        "---\ndescription: Use pearl for Obsidian knowledge base queries\nalwaysApply: false\n---\n{}",
         VAULT_SEARCH_SKILL_DESCRIPTION
     );
     std::fs::write(&rules_path, content)?;
 
-    eprintln!(
-        "  {} Trae: {} + {}",
-        style("✓").green().bold(),
+    cliclack::log::success(format!(
+        "Trae: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        rules_path
-            .strip_prefix(cwd)
-            .unwrap_or(&rules_path)
-            .display(),
-    );
+        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+    ))?;
     Ok(())
 }
 
-/// Install into Windsurf: global MCP config + .windsurf/rules/vault-search.md
+/// Install into Windsurf: global MCP config + .windsurf/rules/pearl.md
 fn install_windsurf(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
-
     let home = dirs_home().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     let mcp_path = home
         .join(".codeium")
@@ -1350,22 +1193,18 @@ fn install_windsurf(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
 
     let rules_dir = cwd.join(".windsurf").join("rules");
     std::fs::create_dir_all(&rules_dir)?;
-    let rules_path = rules_dir.join("vault-search.md");
+    let rules_path = rules_dir.join("pearl.md");
     let content = format!(
-        "---\ntrigger: model_decision\ndescription: Use vault-search for Obsidian knowledge base queries\n---\n{}",
+        "---\ntrigger: model_decision\ndescription: Use pearl for Obsidian knowledge base queries\n---\n{}",
         VAULT_SEARCH_SKILL_DESCRIPTION
     );
     std::fs::write(&rules_path, content)?;
 
-    eprintln!(
-        "  {} Windsurf: {} (global) + {}",
-        style("✓").green().bold(),
+    cliclack::log::success(format!(
+        "Windsurf: {} (global) + {}",
         mcp_path.display(),
-        rules_path
-            .strip_prefix(cwd)
-            .unwrap_or(&rules_path)
-            .display(),
-    );
+        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+    ))?;
     Ok(())
 }
 
@@ -1384,12 +1223,10 @@ fn extract_skill_field<'a>(content: &'a str, field: &str) -> Option<&'a str> {
     None
 }
 
-/// Install into OpenCode: global skill at ~/.opencode/skills/vault-search/SKILL.md
+/// Install into OpenCode: global skill at ~/.opencode/skills/pearl/SKILL.md
 fn install_opencode(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
-
     let home = dirs_home().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
-    let skill_dir = home.join(".opencode").join("skills").join("vault-search");
+    let skill_dir = home.join(".opencode").join("skills").join("pearl");
     std::fs::create_dir_all(&skill_dir)?;
 
     let skill_path = skill_dir.join("SKILL.md");
@@ -1400,43 +1237,40 @@ fn install_opencode(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
         if let Ok(existing) = std::fs::read_to_string(&skill_path) {
             if let Some(old_date) = extract_skill_field(&existing, "updated_at") {
                 if old_date == SKILL_UPDATED_AT {
-                    eprintln!(
-                        "  {} OpenCode: skill already up-to-date ({})",
-                        style("·").dim(),
+                    cliclack::log::info(format!(
+                        "OpenCode: skill already up-to-date ({})",
                         SKILL_UPDATED_AT
-                    );
+                    ))?;
                     return Ok(());
                 }
-                eprintln!(
-                    "  {} OpenCode: updating skill {} -> {}",
-                    style("↑").cyan(),
-                    old_date,
-                    SKILL_UPDATED_AT
-                );
+                cliclack::log::step(format!(
+                    "OpenCode: updating skill {} -> {}",
+                    old_date, SKILL_UPDATED_AT
+                ))?;
             }
         }
     }
 
     let content = format!(
         r#"---
-name: vault-search
+name: pearl
 updated_at: "{updated_at}"
-description: Semantic search over Obsidian vaults using vault-search CLI. Use when the user asks to search their notes, find related content, look up something in their vault, or needs context from their knowledge base. Supports hybrid (vector + keyword), semantic-only, and full-text search with folder/tag filtering.
+description: Semantic search over Obsidian vaults using pearl CLI. Use when the user asks to search their notes, find related content, look up something in their vault, or needs context from their knowledge base. Supports hybrid (vector + keyword), semantic-only, and full-text search with folder/tag filtering.
 ---
 
-# vault-search
+# pearl
 
 Local-first semantic search for Obsidian vaults. Provides hybrid (vector + full-text) search over markdown notes.
 
-Binary: `{bin_path}` (must be installed and configured via `vault-search init`).
+Binary: `{bin_path}` (must be installed and configured via `pearl init`).
 
 ## Command reference
 
 ```bash
-vault-search search <QUERY> [--mode hybrid|semantic|fts] [--top-k N] [--json]
-vault-search index [--force] [--vault PATH]
-vault-search serve [--vault PATH]
-vault-search config [--json]
+pearl search <QUERY> [--mode hybrid|semantic|fts] [--top-k N] [--json]
+pearl index [--force] [--vault PATH]
+pearl serve [--vault PATH]
+pearl config [--json]
 ```
 
 ## Search modes
@@ -1451,19 +1285,19 @@ vault-search config [--json]
 
 ```bash
 # Search vault (most common)
-vault-search search --json "your question here"
+pearl search --json "your question here"
 
 # More results
-vault-search search -k 20 --json "error handling patterns"
+pearl search -k 20 --json "error handling patterns"
 
 # Restrict to a folder
-vault-search search -f wiki/ --json "architecture"
+pearl search -f wiki/ --json "architecture"
 
 # Filter by tag
-vault-search search -t project --json "status update"
+pearl search -t project --json "status update"
 
 # Check health
-vault-search config
+pearl config
 ```
 
 ## Tips
@@ -1478,17 +1312,12 @@ vault-search config
     );
     std::fs::write(&skill_path, &content)?;
 
-    eprintln!(
-        "  {} OpenCode: {}",
-        style("✓").green().bold(),
-        skill_path.display(),
-    );
+    cliclack::log::success(format!("OpenCode: {}", skill_path.display()))?;
     Ok(())
 }
 
-/// Install into Codex: ~/.codex/config.toml + ~/.codex/skills/vault-search/SKILL.md
+/// Install into Codex: ~/.codex/config.toml + ~/.codex/skills/pearl/SKILL.md
 fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-    use console::style;
 
     let home = dirs_home().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     let codex_dir = home.join(".codex");
@@ -1497,9 +1326,9 @@ fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     let config_path = codex_dir.join("config.toml");
     if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)?;
-        if !content.contains("mcp_servers.vault-search") {
+        if !content.contains("mcp_servers.pearl") {
             let mcp_block = format!(
-                "\n[mcp_servers.vault-search]\ncommand = \"{}\"\nargs = [\"serve\"]\nenabled = true\n",
+                "\n[mcp_servers.pearl]\ncommand = \"{}\"\nargs = [\"serve\"]\nenabled = true\n",
                 bin_path
             );
             std::fs::write(&config_path, format!("{}{}", content, mcp_block))?;
@@ -1507,14 +1336,14 @@ fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     } else {
         std::fs::create_dir_all(&codex_dir)?;
         let content = format!(
-            "[mcp_servers.vault-search]\ncommand = \"{}\"\nargs = [\"serve\"]\nenabled = true\n",
+            "[mcp_servers.pearl]\ncommand = \"{}\"\nargs = [\"serve\"]\nenabled = true\n",
             bin_path
         );
         std::fs::write(&config_path, content)?;
     }
 
     // Skill file (reuse same content as OpenCode)
-    let skill_dir = codex_dir.join("skills").join("vault-search");
+    let skill_dir = codex_dir.join("skills").join("pearl");
     std::fs::create_dir_all(&skill_dir)?;
 
     let skill_path = skill_dir.join("SKILL.md");
@@ -1524,11 +1353,10 @@ fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
         if let Ok(existing) = std::fs::read_to_string(&skill_path) {
             if let Some(old_date) = extract_skill_field(&existing, "updated_at") {
                 if old_date == SKILL_UPDATED_AT {
-                    eprintln!(
-                        "  {} Codex: skill already up-to-date ({})",
-                        style("·").dim(),
+                    cliclack::log::info(format!(
+                        "Codex: skill already up-to-date ({})",
                         SKILL_UPDATED_AT
-                    );
+                    ))?;
                     return Ok(());
                 }
             }
@@ -1537,12 +1365,12 @@ fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
 
     let content = format!(
         r#"---
-name: vault-search
+name: pearl
 updated_at: "{updated_at}"
-description: Semantic search over Obsidian vaults using vault-search CLI.
+description: Semantic search over Obsidian vaults using pearl CLI.
 ---
 
-# vault-search
+# pearl
 
 Local-first semantic search for Obsidian vaults.
 
@@ -1551,10 +1379,10 @@ Binary: `{bin_path}`
 ## Usage
 
 ```bash
-vault-search search --json "query"
-vault-search search -m semantic -k 20 --json "query"
-vault-search search -f folder/ --json "query"
-vault-search config
+pearl search --json "query"
+pearl search -m semantic -k 20 --json "query"
+pearl search -f folder/ --json "query"
+pearl config
 ```
 "#,
         updated_at = SKILL_UPDATED_AT,
@@ -1562,21 +1390,16 @@ vault-search config
     );
     std::fs::write(&skill_path, &content)?;
 
-    eprintln!(
-        "  {} Codex: {} + {}",
-        style("✓").green().bold(),
+    cliclack::log::success(format!(
+        "Codex: {} + {}",
         config_path.display(),
         skill_path.display(),
-    );
+    ))?;
     Ok(())
 }
 
 /// Main install orchestrator.
 fn run_install(targets: Vec<String>) -> Result<()> {
-    use console::style;
-    use dialoguer::MultiSelect;
-    use dialoguer::theme::ColorfulTheme;
-
     let cwd = std::env::current_dir()?;
     let already_installed = detect_installed_targets(&cwd);
 
@@ -1585,47 +1408,30 @@ fn run_install(targets: Vec<String>) -> Result<()> {
         if !std::io::stdin().is_terminal() {
             anyhow::bail!(
                 "install requires --target in non-interactive mode.\n\
-                 Example: vault-search install --target cursor,claude-code"
+                 Example: pearl install --target cursor,claude-code"
             );
         }
 
-        let theme = ColorfulTheme::default();
-        println!();
-        println!("  {}", style("vault-search · Install").bold());
-        println!("  {}", style("─".repeat(40)).dim());
-        println!();
+        cliclack::clear_screen()?;
+        cliclack::intro("pearl · Install")?;
 
-        let items: Vec<String> = INSTALL_TARGETS
-            .iter()
-            .map(|(id, label)| {
-                if already_installed.contains(id) {
-                    format!("{} (installed)", label)
-                } else {
-                    label.to_string()
-                }
-            })
-            .collect();
-
-        // Pre-select already-installed items
-        let defaults: Vec<bool> = INSTALL_TARGETS
-            .iter()
-            .map(|(id, _)| already_installed.contains(id))
-            .collect();
-
-        let selections = MultiSelect::with_theme(&theme)
-            .with_prompt("  Which agents to install into?")
-            .items(&items)
-            .defaults(&defaults)
-            .interact()?;
+        let mut multi = cliclack::multiselect("Which agents to install into?");
+        for (id, label) in INSTALL_TARGETS {
+            let hint = if already_installed.contains(id) {
+                "installed"
+            } else {
+                ""
+            };
+            multi = multi.item(*id, *label, hint);
+        }
+        multi = multi.initial_values(already_installed.clone());
+        let selections: Vec<&str> = multi.interact()?;
 
         if selections.is_empty() {
             anyhow::bail!("No target selected.");
         }
 
         selections
-            .into_iter()
-            .map(|i| INSTALL_TARGETS[i].0)
-            .collect()
     } else {
         // Validate targets
         for t in &targets {
@@ -1637,10 +1443,7 @@ fn run_install(targets: Vec<String>) -> Result<()> {
             }
         }
 
-        println!();
-        println!("  {}", style("vault-search · Install").bold());
-        println!("  {}", style("─".repeat(40)).dim());
-        println!();
+        cliclack::intro("pearl · Install")?;
 
         targets.iter().map(|s| s.as_str()).collect()
     };
@@ -1652,11 +1455,7 @@ fn run_install(targets: Vec<String>) -> Result<()> {
         .collect();
 
     if new_targets.is_empty() {
-        println!(
-            "  {} All selected agents already have vault-search installed.",
-            style("✓").green().bold()
-        );
-        println!();
+        cliclack::outro("All selected agents already have pearl installed.")?;
         return Ok(());
     }
 
@@ -1664,7 +1463,7 @@ fn run_install(targets: Vec<String>) -> Result<()> {
     let bin_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "vault-search".to_string());
+        .unwrap_or_else(|| "pearl".to_string());
 
     for target in &new_targets {
         match *target {
@@ -1678,14 +1477,29 @@ fn run_install(targets: Vec<String>) -> Result<()> {
         }
     }
 
-    println!();
-    println!("  {} Done!", style("✓").green().bold());
-    println!();
+    let summary = new_targets
+        .iter()
+        .map(|t| format!("  {} installed", t))
+        .collect::<Vec<_>>()
+        .join("\n");
+    cliclack::outro(format!("Done!\n{}", summary))?;
 
     Ok(())
 }
 
 // ─── Config Command ──────────────────────────────────────────────────────────
+
+/// Print a concise config summary (used after init).
+fn print_config_summary(config: &config::Config) {
+    use console::style;
+
+    println!();
+    println!("    {}    {}", style("vault").dim(), config.vault_path.display());
+    println!("    {} {}", style("provider").dim(), config.embedding.provider);
+    println!("    {} {}", style("endpoint").dim(), config.embedding.endpoint);
+    println!("    {}    {}", style("model").dim(), config.embedding.model);
+    println!();
+}
 
 /// Print effective config in human-readable format.
 fn print_config_human(config: &config::Config) {
@@ -1799,61 +1613,42 @@ fn print_config_json(config: &config::Config) {
     );
 }
 
-/// Interactive onboarding: write config to the global path (~/.config/vault-search/config.toml).
+/// Interactive onboarding: write config to the global path (~/.config/pearl/config.toml).
 fn run_init_global() -> Result<()> {
     use config::{Config, ConfigFile};
-    use console::style;
-    use dialoguer::{Input, theme::ColorfulTheme};
-
-    let theme = ColorfulTheme::default();
 
     let config_path = Config::global_config_path()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine global config directory"))?;
 
-    println!();
-    println!("  {}", style("vault-search · Global Setup").bold());
-    println!("  {}", style("─".repeat(40)).dim());
-    println!(
-        "  Config: {}",
-        style(config_path.display()).cyan().underlined()
-    );
-    println!();
-    println!(
-        "  {}",
-        style("This config applies to all vaults unless overridden locally.").dim()
-    );
-    println!();
+    cliclack::clear_screen()?;
+    cliclack::intro("pearl · Global Setup")?;
+
+    cliclack::log::info(format!(
+        "Config: {}\nApplies to all vaults unless overridden locally.",
+        config_path.display()
+    ))?;
 
     // Check if global config already exists
     if Config::global_config_exists() {
-        eprintln!(
-            "  {} Global config already exists.",
-            style("!").yellow().bold()
-        );
-        let overwrite = dialoguer::Confirm::with_theme(&theme)
-            .with_prompt("  Overwrite existing global config?")
-            .default(false)
+        let overwrite: bool = cliclack::confirm("Global config already exists. Overwrite?")
+            .initial_value(false)
             .interact()?;
         if !overwrite {
-            println!("  Aborted.");
+            cliclack::outro("Aborted.")?;
             return Ok(());
         }
-        println!();
     }
 
     // ── Vault path ──────────────────────────────────────────────────────
-    // Try to auto-detect a default vault path for the prompt
     let default_vault = detect_vault().ok().unwrap_or_default();
-    let vault_path: String = Input::with_theme(&theme)
-        .with_prompt("  Default vault path")
-        .default(default_vault)
-        .interact_text()?;
+    let vault_path: String = cliclack::input("Default vault path")
+        .default_input(&default_vault)
+        .interact()?;
     let vault_path = if vault_path.is_empty() {
         None
     } else {
         Some(vault_path)
     };
-    println!();
 
     let embedding_config = prompt_embedding_config()?;
 
@@ -1867,39 +1662,12 @@ fn run_init_global() -> Result<()> {
 
     Config::save_global_config_file(&config_file)?;
 
-    println!();
-    println!("  {}", style("─".repeat(40)).dim());
-    println!(
-        "  {} Global configuration saved!",
-        style("✓").green().bold()
-    );
-    println!();
-    if let Some(ref vp) = vault_path {
-        println!("  {}     {}", style("vault").dim(), style(vp).underlined());
-    }
-    println!(
-        "  {}  {}",
-        style("provider").dim(),
-        embedding_config.provider
-    );
-    println!(
-        "  {}  {}",
-        style("endpoint").dim(),
-        embedding_config.endpoint
-    );
-    println!("  {}     {}", style("model").dim(), embedding_config.model);
-    println!(
-        "  {}    {}",
-        style("config").dim(),
-        style(config_path.display()).underlined()
-    );
-    println!();
-    println!(
-        "  {}",
-        style("All vaults will use this config unless they have a local .vault-mcp/config.toml.")
-            .dim()
-    );
-    println!();
+    cliclack::outro("Global configuration saved!")?;
+
+    // Show key config summary (outside cliclack TUI boundary)
+    let effective_vault = vault_path.as_deref().unwrap_or(".");
+    let config = Config::new(effective_vault);
+    print_config_summary(&config);
 
     Ok(())
 }

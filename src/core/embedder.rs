@@ -265,7 +265,7 @@ fn check_api_health(config: &EmbeddingConfig) -> HealthStatus {
     // First check if API key is available
     if config.provider == EmbeddingProvider::Openai && config.resolve_api_key().is_none() {
         return HealthStatus::Unreachable(
-            "API key not configured. Run `vault-search init` or set OPENAI_API_KEY env var".into(),
+            "API key not configured. Run `pearl init` or set OPENAI_API_KEY env var".into(),
         );
     }
 

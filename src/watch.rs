@@ -106,7 +106,7 @@ pub async fn run_watch(vault_path: &str) -> Result<()> {
     if is_watch_running(vault_path) {
         let pid_content = fs::read_to_string(pid_file_path(vault_path)).unwrap_or_default();
         anyhow::bail!(
-            "Watcher is already running (PID {}). Stop it first or use `vault-search watch --stop`.",
+            "Watcher is already running (PID {}). Stop it first or use `pearl watch --stop`.",
             pid_content.trim()
         );
     }
@@ -122,7 +122,7 @@ pub async fn run_watch(vault_path: &str) -> Result<()> {
 
     if std::io::stderr().is_terminal() {
         eprintln!();
-        eprintln!("  {} vault-search watcher", style("⟳").green().bold());
+        eprintln!("  {} pearl watcher", style("⟳").green().bold());
         eprintln!();
         eprintln!("    {}  {}", style("vault").dim(), vault_path);
         eprintln!(

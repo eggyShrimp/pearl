@@ -72,7 +72,7 @@ impl VaultServer {
     #[tool(
         description = "Unified vault search tool. Commands: 'search' (hybrid semantic+full-text, params: query, mode, limit, folders, tags), 'index' (rebuild index, params: force), 'get' (read note, params: path), 'list' (list files, params: folder, recursive), 'status' (health check)"
     )]
-    async fn vault_search(&self, Parameters(params): Parameters<VaultSearchParams>) -> String {
+    async fn pearl(&self, Parameters(params): Parameters<VaultSearchParams>) -> String {
         match params.command.as_str() {
             "search" => self.handle_search(params).await,
             "index" => self.handle_index(params).await,
@@ -197,7 +197,7 @@ fn print_banner(vault_path: &str, config: &Config, transport_info: &str) {
         return;
     }
     eprintln!();
-    eprintln!("  {} vault-search MCP server", style("●").green().bold());
+    eprintln!("  {} pearl MCP server", style("●").green().bold());
     eprintln!();
     eprintln!("    {}  {}", style("vault").dim(), vault_path);
     eprintln!(
