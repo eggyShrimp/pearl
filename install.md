@@ -1,26 +1,22 @@
-# Install vault-search with Homebrew
+# Install Pearl (vault-search)
 
 This document is for agents. Follow it directly when a user asks you to install
-`vault-search`.
+`pearl` (formerly `vault-search`).
 
 ## Goal
 
-Install the published `vault-search` binary with Homebrew and verify that the
-command is available. Do not build from source, do not run `cargo install`, and
-do not ask the user to run commands manually unless Homebrew itself is missing.
+Install the `pearl` binary and verify that the command is available.
 
 ## Supported platforms
 
 - macOS Apple Silicon
+- macOS Intel
 - Linux x86_64
 - Linux arm64
 
-macOS Intel is not published. If the machine is macOS Intel, stop and report
-that this release does not support that platform.
+## Install methods
 
-## Install
-
-Run these commands:
+### Method 1: Homebrew (recommended for end users)
 
 ```bash
 brew tap eggyShrimp/tap
@@ -29,7 +25,7 @@ brew install eggyShrimp/tap/vault-search
 vault-search --version
 ```
 
-If `vault-search` is already installed, refresh it:
+If already installed, refresh it:
 
 ```bash
 brew update
@@ -37,9 +33,40 @@ brew reinstall eggyShrimp/tap/vault-search
 vault-search --version
 ```
 
-## Verify binary install
+### Method 2: Build from source (development)
 
-After installation, confirm Homebrew is using the release archive and not a
+```bash
+cd /path/to/pearl
+cargo build --release
+cp target/release/pearl ~/.local/bin/pearl
+pearl --version
+```
+
+Or use `cargo install`:
+
+```bash
+cd /path/to/pearl
+cargo install --path .
+# Installs to: ~/.cargo/bin/pearl
+```
+
+**Important:** If `~/.local/bin` is higher priority in PATH than `~/.cargo/bin`,
+copy the binary manually:
+
+```bash
+cp ~/.cargo/bin/pearl ~/.local/bin/pearl
+```
+
+Verify the active binary location:
+
+```bash
+which pearl
+pearl --version
+```
+
+## Verify binary install (Homebrew)
+
+After Homebrew installation, confirm it is using the release archive and not a
 source build:
 
 ```bash

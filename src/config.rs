@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fs;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,55 @@ pub struct Config {
     pub embedding: EmbeddingConfig,
     pub index: IndexConfig,
     pub search: SearchConfig,
+}
+
+// ─── MCP Runtime State ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRuntimeState {
+    pub transport: String,
+    pub vault_path: String,
+    pub pid: u32,
+    pub local_url: Option<String>,
+    pub network_url: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub updated_at: String,
+}
+
+impl McpRuntimeState {
+    pub fn streamable_http(vault_path: &str, port: u16, network_host: Option<String>) -> Self {
+        Self {
+            transport: "streamable_http".into(),
+            vault_path: vault_path.into(),
+            pid: std::process::id(),
+            local_url: Some(format!("http://localhost:{}/mcp", port)),
+            network_url: network_host.map(|host| format!("http://{}:{}/mcp", host, port)),
+            host: Some("0.0.0.0".into()),
+            port: Some(port),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    pub fn stdio(vault_path: &str) -> Self {
+        Self {
+            transport: "stdio".into(),
+            vault_path: vault_path.into(),
+            pid: std::process::id(),
+            local_url: None,
+            network_url: None,
+            host: None,
+            port: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    pub fn is_reachable(&self) -> bool {
+        let Some(port) = self.port else {
+            return false;
+        };
+        can_connect("127.0.0.1", port) || can_connect("localhost", port)
+    }
 }
 
 // ─── Embedding Config ────────────────────────────────────────────────────────
@@ -314,8 +365,7 @@ impl Config {
 
     /// Path to the global user config: `~/.config/pearl/config.toml`
     pub fn global_config_path() -> Option<PathBuf> {
-        directories::BaseDirs::new()
-            .map(|d| d.config_dir().join("pearl").join("config.toml"))
+        directories::BaseDirs::new().map(|d| d.config_dir().join("pearl").join("config.toml"))
     }
 
     /// Check if a global config file exists.
@@ -380,4 +430,55 @@ impl Config {
     pub fn tantivy_path(&self) -> PathBuf {
         self.index.data_dir.join("tantivy")
     }
+
+    pub fn graph_db_path(&self) -> PathBuf {
+        self.index.data_dir.join("graph.db")
+    }
+
+    pub fn mcp_state_path(vault_path: &str) -> PathBuf {
+        PathBuf::from(vault_path)
+            .join(".vault-mcp")
+            .join("mcp-state.json")
+    }
+
+    pub fn save_mcp_state(vault_path: &str, state: &McpRuntimeState) -> Result<()> {
+        let state_path = Self::mcp_state_path(vault_path);
+        if let Some(parent) = state_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let content =
+            serde_json::to_string_pretty(state).context("Failed to serialize MCP state")?;
+        fs::write(&state_path, content)
+            .with_context(|| format!("Failed to write MCP state to {}", state_path.display()))?;
+        Ok(())
+    }
+
+    pub fn load_mcp_state(vault_path: &str) -> Option<McpRuntimeState> {
+        let state_path = Self::mcp_state_path(vault_path);
+        fs::read_to_string(state_path)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+    }
+
+    pub fn clear_mcp_state(vault_path: &str) -> Result<()> {
+        let state_path = Self::mcp_state_path(vault_path);
+        if state_path.exists() {
+            fs::remove_file(&state_path).with_context(|| {
+                format!("Failed to remove MCP state at {}", state_path.display())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn can_connect(host: &str, port: u16) -> bool {
+    let Ok(addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    for addr in addrs {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok() {
+            return true;
+        }
+    }
+    false
 }

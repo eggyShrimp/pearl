@@ -14,8 +14,9 @@ use tokio::net::TcpListener;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::config::Config;
+use crate::config::{Config, McpRuntimeState};
 use crate::core::embedder;
+use crate::core::graph::GraphStore;
 use crate::core::vault;
 use crate::indexer;
 use crate::search;
@@ -96,13 +97,9 @@ impl VaultServer {
         let limit = params.limit.unwrap_or(10);
         let mode = params.mode.as_deref().unwrap_or("hybrid");
 
-        let result = match mode {
+        match mode {
             "hybrid" => {
-                search::hybrid_search(&self.vault_path, &query, limit, params.folders, params.tags)
-                    .await
-            }
-            "semantic" => {
-                search::vector_search_only(
+                match search::hybrid_search(
                     &self.vault_path,
                     &query,
                     limit,
@@ -110,20 +107,38 @@ impl VaultServer {
                     params.tags,
                 )
                 .await
+                {
+                    Ok(response) => serde_json::to_string_pretty(&response)
+                        .unwrap_or_else(|e| format!("Serialization error: {}", e)),
+                    Err(e) => format!("Search error: {}", e),
+                }
             }
-            "fts" => search::fts_search_only(&self.vault_path, &query, limit).await,
+            "semantic" => {
+                match search::vector_search_only(
+                    &self.vault_path,
+                    &query,
+                    limit,
+                    params.folders,
+                    params.tags,
+                )
+                .await
+                {
+                    Ok(results) => serde_json::to_string_pretty(&results)
+                        .unwrap_or_else(|e| format!("Serialization error: {}", e)),
+                    Err(e) => format!("Search error: {}", e),
+                }
+            }
+            "fts" => match search::fts_search_only(&self.vault_path, &query, limit).await {
+                Ok(results) => serde_json::to_string_pretty(&results)
+                    .unwrap_or_else(|e| format!("Serialization error: {}", e)),
+                Err(e) => format!("Search error: {}", e),
+            },
             _ => {
-                return format!(
+                format!(
                     "Unknown search mode: '{}'. Supported: hybrid, semantic, fts",
                     mode
                 )
             }
-        };
-
-        match result {
-            Ok(results) => serde_json::to_string_pretty(&results)
-                .unwrap_or_else(|e| format!("Serialization error: {}", e)),
-            Err(e) => format!("Search error: {}", e),
         }
     }
 
@@ -174,8 +189,17 @@ impl VaultServer {
             Some(_) => "empty".into(),
             None => "not required".into(),
         };
+
+        let graph_status = match GraphStore::open(&config.graph_db_path()) {
+            Ok(store) => match store.stats() {
+                Ok(stats) => format!("{} nodes, {} edges", stats.node_count, stats.edge_count),
+                Err(_) => "error reading stats".into(),
+            },
+            Err(_) => "not initialized".into(),
+        };
+
         format!(
-            "Provider: {}\nEmbedding service: {}\nEndpoint: {}\nModel: {}\nAPI key: {}\nVault: {}\nConfig: {}",
+            "Provider: {}\nEmbedding service: {}\nEndpoint: {}\nModel: {}\nAPI key: {}\nVault: {}\nConfig: {}\nGraph: {}",
             config.embedding.provider,
             health.message(),
             config.embedding.endpoint,
@@ -186,7 +210,8 @@ impl VaultServer {
                 "found"
             } else {
                 "not found (using defaults)"
-            }
+            },
+            graph_status,
         )
     }
 }
@@ -197,7 +222,7 @@ fn print_banner(vault_path: &str, config: &Config, transport_info: &str) {
         return;
     }
     eprintln!();
-    eprintln!("  {} pearl MCP server", style("●").green().bold());
+    eprint!("{}", crate::pearl_logo_colored());
     eprintln!();
     eprintln!("    {}  {}", style("vault").dim(), vault_path);
     eprintln!(
@@ -227,6 +252,10 @@ pub async fn run_server_stdio(vault_path: &str) -> Result<()> {
     let config = Config::new(vault_path);
 
     print_banner(vault_path, &config, "stdio (JSON-RPC)");
+    Config::save_mcp_state(vault_path, &McpRuntimeState::stdio(vault_path))?;
+    let _state_guard = scopeguard::guard(vault_path.to_string(), |path| {
+        let _ = Config::clear_mcp_state(&path);
+    });
 
     if std::io::stderr().is_terminal() {
         eprintln!("  {} Waiting for client connection...", style("↺").dim());
@@ -298,6 +327,13 @@ pub async fn run_server_http(vault_path: &str, port: u16) -> Result<()> {
     let lan_ip = local_ip();
     let transport_info = "Streamable HTTP (network)";
     print_banner(vault_path, &config, transport_info);
+    Config::save_mcp_state(
+        vault_path,
+        &McpRuntimeState::streamable_http(vault_path, actual_port, lan_ip.map(|ip| ip.to_string())),
+    )?;
+    let _state_guard = scopeguard::guard(vault_path.to_string(), |path| {
+        let _ = Config::clear_mcp_state(&path);
+    });
 
     if std::io::stderr().is_terminal() {
         eprintln!(

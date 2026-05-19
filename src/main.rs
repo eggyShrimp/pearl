@@ -21,7 +21,7 @@ enum SearchMode {
     Fts,
 }
 
-const PEARL_LOGO: &str = r#"
+const PEARL_LOGO_PLAIN: &str = r#"
                            __
     ____  ___  ____ ______/ /
    / __ \/ _ \/ __ `/ ___/ / 
@@ -30,12 +30,41 @@ const PEARL_LOGO: &str = r#"
 /_/                          
 "#;
 
+/// Render the logo with blue→purple gradient background fill on stroke characters.
+pub fn pearl_logo_colored() -> String {
+    const LINES: &[&str] = &[
+        r"                           __",
+        r"    ____  ___  ____ ______/ /",
+        r"   / __ \/ _ \/ __ `/ ___/ / ",
+        r"  / /_/ /  __/ /_/ / /  / /  ",
+        r" / .___/\___/\__,_/_/  /_/   ",
+        r"/_/                          ",
+    ];
+    // Blue→purple gradient palette (per row)
+    let bg_colors: &[u8] = &[63, 69, 99, 105, 135, 129];
+
+    let mut out = String::new();
+    for (i, line) in LINES.iter().enumerate() {
+        let bg = bg_colors[i % bg_colors.len()];
+        for ch in line.chars() {
+            if ch == ' ' {
+                out.push(' ');
+            } else {
+                // White foreground + colored background for stroke chars
+                out.push_str(&format!("\x1b[97;48;5;{}m{}\x1b[0m", bg, ch));
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
 #[derive(Parser)]
 #[command(
     name = "pearl",
     version,
     about = "Semantic search for Obsidian vaults, exposed as an MCP server for AI agents.",
-    before_long_help = PEARL_LOGO,
+    before_long_help = PEARL_LOGO_PLAIN,
     long_about = "pearl provides hybrid semantic + full-text search over your Obsidian vault.\n\n\
         It embeds your notes using a local (Ollama) or cloud (OpenAI) model, stores vectors\n\
         alongside your vault, and serves search results via the Model Context Protocol (MCP)\n\
@@ -231,10 +260,7 @@ async fn main() -> Result<()> {
                         );
                     } else {
                         eprintln!("  Check your embedding endpoint and API key configuration.");
-                        eprintln!(
-                            "  Run {} to reconfigure.",
-                            style("pearl init").bold()
-                        );
+                        eprintln!("  Run {} to reconfigure.", style("pearl init").bold());
                     }
                     eprintln!();
                     anyhow::bail!("Embedding service is not reachable. Cannot index.");
@@ -276,6 +302,12 @@ async fn main() -> Result<()> {
             println!("    {}  {}", style("skipped").dim(), stats.skipped);
             println!("    {}  {}", style("deleted").dim(), stats.deleted);
             println!("    {}  {}", style("chunks").dim(), stats.total_chunks);
+            println!(
+                "    {}  {} nodes, {} edges",
+                style("graph").dim(),
+                stats.graph_nodes,
+                stats.graph_edges
+            );
             println!();
             watch::ensure_watch_running(&vault);
             Ok(())
@@ -326,14 +358,21 @@ async fn main() -> Result<()> {
                 None => None,
             };
 
-            let mut results = match mode {
+            let (mut results, linked_notes) = match mode {
                 SearchMode::Hybrid => {
-                    search::hybrid_search(&vault, &query, limit, folders, tags).await?
+                    let response =
+                        search::hybrid_search(&vault, &query, limit, folders, tags).await?;
+                    (response.results, response.linked_notes)
                 }
                 SearchMode::Semantic => {
-                    search::vector_search_only(&vault, &query, limit, folders, tags).await?
+                    let r =
+                        search::vector_search_only(&vault, &query, limit, folders, tags).await?;
+                    (r, vec![])
                 }
-                SearchMode::Fts => search::fts_search_only(&vault, &query, limit).await?,
+                SearchMode::Fts => {
+                    let r = search::fts_search_only(&vault, &query, limit).await?;
+                    (r, vec![])
+                }
             };
 
             // Post-filter: --exclude
@@ -370,9 +409,13 @@ async fn main() -> Result<()> {
 
             if json {
                 // Machine-readable JSON output
+                let output = serde_json::json!({
+                    "results": results,
+                    "linked_notes": linked_notes,
+                });
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&results)
+                    serde_json::to_string_pretty(&output)
                         .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
                 );
             } else {
@@ -425,6 +468,21 @@ async fn main() -> Result<()> {
                 }
                 if results.is_empty() {
                     println!("  No results found.");
+                }
+
+                // Show linked notes from graph expansion
+                if !linked_notes.is_empty() {
+                    use console::style;
+                    println!("  {} Linked notes:", style("⟡").dim());
+                    for note in &linked_notes {
+                        println!(
+                            "    {} {} (via {})",
+                            style("→").dim(),
+                            style(&note.path).blue(),
+                            style(&note.related_to).dim()
+                        );
+                    }
+                    println!();
                 }
             }
             Ok(())
@@ -750,10 +808,7 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
                 .unwrap_or_else(|| "http://localhost:11434".into());
 
             if detected.is_some() {
-                cliclack::log::success(format!(
-                    "Auto-detected Ollama at {}",
-                    &default_endpoint
-                ))?;
+                cliclack::log::success(format!("Auto-detected Ollama at {}", &default_endpoint))?;
             } else {
                 cliclack::log::warning(
                     "Ollama is not running. Install: https://ollama.com/download",
@@ -904,10 +959,7 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
                     ))?;
                 }
                 crate::core::embedder::HealthStatus::Unreachable(msg) => {
-                    cliclack::log::warning(format!(
-                        "{}\n  Check your endpoint and API key.",
-                        msg
-                    ))?;
+                    cliclack::log::warning(format!("{}\n  Check your endpoint and API key.", msg))?;
                 }
                 crate::core::embedder::HealthStatus::ModelMissing(msg) => {
                     cliclack::log::warning(msg)?;
@@ -926,7 +978,6 @@ fn run_init(vault_path: &str) -> Result<()> {
     use config::{Config, ConfigFile};
 
     cliclack::clear_screen()?;
-    eprintln!("{}", PEARL_LOGO);
     cliclack::intro("pearl · Setup")?;
 
     cliclack::log::info(format!("Vault: {}", vault_path))?;
@@ -1124,7 +1175,10 @@ fn install_cursor(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     cliclack::log::success(format!(
         "Cursor: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+        rules_path
+            .strip_prefix(cwd)
+            .unwrap_or(&rules_path)
+            .display(),
     ))?;
     Ok(())
 }
@@ -1143,7 +1197,10 @@ fn install_claude_code(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     if claude_md_path.exists() {
         let existing = std::fs::read_to_string(&claude_md_path)?;
         if !existing.contains("pearl") {
-            std::fs::write(&claude_md_path, format!("{}\n{}", existing.trim_end(), section))?;
+            std::fs::write(
+                &claude_md_path,
+                format!("{}\n{}", existing.trim_end(), section),
+            )?;
         }
     } else {
         std::fs::write(
@@ -1155,7 +1212,10 @@ fn install_claude_code(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     cliclack::log::success(format!(
         "Claude Code: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        claude_md_path.strip_prefix(cwd).unwrap_or(&claude_md_path).display(),
+        claude_md_path
+            .strip_prefix(cwd)
+            .unwrap_or(&claude_md_path)
+            .display(),
     ))?;
     Ok(())
 }
@@ -1177,7 +1237,10 @@ fn install_trae(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     cliclack::log::success(format!(
         "Trae: {} + {}",
         mcp_path.strip_prefix(cwd).unwrap_or(&mcp_path).display(),
-        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+        rules_path
+            .strip_prefix(cwd)
+            .unwrap_or(&rules_path)
+            .display(),
     ))?;
     Ok(())
 }
@@ -1203,7 +1266,10 @@ fn install_windsurf(cwd: &std::path::Path, bin_path: &str) -> Result<()> {
     cliclack::log::success(format!(
         "Windsurf: {} (global) + {}",
         mcp_path.display(),
-        rules_path.strip_prefix(cwd).unwrap_or(&rules_path).display(),
+        rules_path
+            .strip_prefix(cwd)
+            .unwrap_or(&rules_path)
+            .display(),
     ))?;
     Ok(())
 }
@@ -1318,7 +1384,6 @@ pearl config
 
 /// Install into Codex: ~/.codex/config.toml + ~/.codex/skills/pearl/SKILL.md
 fn install_codex(_cwd: &std::path::Path, bin_path: &str) -> Result<()> {
-
     let home = dirs_home().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     let codex_dir = home.join(".codex");
 
@@ -1494,9 +1559,21 @@ fn print_config_summary(config: &config::Config) {
     use console::style;
 
     println!();
-    println!("    {}    {}", style("vault").dim(), config.vault_path.display());
-    println!("    {} {}", style("provider").dim(), config.embedding.provider);
-    println!("    {} {}", style("endpoint").dim(), config.embedding.endpoint);
+    println!(
+        "    {}    {}",
+        style("vault").dim(),
+        config.vault_path.display()
+    );
+    println!(
+        "    {} {}",
+        style("provider").dim(),
+        config.embedding.provider
+    );
+    println!(
+        "    {} {}",
+        style("endpoint").dim(),
+        config.embedding.endpoint
+    );
     println!("    {}    {}", style("model").dim(), config.embedding.model);
     println!();
 }
@@ -1505,6 +1582,8 @@ fn print_config_summary(config: &config::Config) {
 fn print_config_human(config: &config::Config) {
     use console::style;
 
+    let mcp = mcp_status(config);
+
     println!();
     println!("  {}", style("Effective Configuration").bold());
     println!("  {}", style("─".repeat(40)).dim());
@@ -1512,7 +1591,11 @@ fn print_config_human(config: &config::Config) {
 
     // Local search
     println!("  {}", style("[Embedding]").bold());
-    println!("    {}    {}", style("vault").dim(), config.vault_path.display());
+    println!(
+        "    {}    {}",
+        style("vault").dim(),
+        config.vault_path.display()
+    );
     println!(
         "    {} {}",
         style("provider").dim(),
@@ -1564,6 +1647,18 @@ fn print_config_human(config: &config::Config) {
     );
 
     println!();
+    println!("  {}", style("[MCP]").bold());
+    println!("    {}  {}", style("status").dim(), mcp.status);
+    println!("    {} {}", style("command").dim(), mcp.command);
+    println!("    {} {}", style("network").dim(), mcp.network_command);
+    if let Some(address) = &mcp.address {
+        println!("    {} {}", style("address").dim(), address);
+    }
+    if let Some(network_url) = &mcp.network_url {
+        println!("    {} {}", style("lan").dim(), network_url);
+    }
+
+    println!();
     println!("  {}", style("[Files]").bold());
     if let Some(global_path) = config::Config::global_config_path() {
         let exists = global_path.exists();
@@ -1587,6 +1682,7 @@ fn print_config_human(config: &config::Config) {
 
 /// Print effective config as JSON.
 fn print_config_json(config: &config::Config) {
+    let mcp = mcp_status(config);
     let output = serde_json::json!({
         "vault_path": config.vault_path.display().to_string(),
         "embedding": {
@@ -1605,12 +1701,69 @@ fn print_config_json(config: &config::Config) {
             "data_dir": config.index.data_dir.display().to_string(),
             "max_chunk_tokens": config.index.max_chunk_tokens,
         },
+        "mcp": {
+            "status": mcp.status,
+            "transport": mcp.transport,
+            "address": mcp.address,
+            "local_url": mcp.local_url,
+            "network_url": mcp.network_url,
+            "pid": mcp.pid,
+            "updated_at": mcp.updated_at,
+            "command": mcp.command,
+            "network_command": mcp.network_command,
+            "state_file": mcp.state_file,
+        },
     });
 
     println!(
         "{}",
-        serde_json::to_string_pretty(&output).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
+        serde_json::to_string_pretty(&output)
+            .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
     );
+}
+
+struct McpConfigStatus {
+    status: String,
+    transport: Option<String>,
+    address: Option<String>,
+    local_url: Option<String>,
+    network_url: Option<String>,
+    pid: Option<u32>,
+    updated_at: Option<String>,
+    command: String,
+    network_command: String,
+    state_file: String,
+}
+
+fn mcp_status(config: &config::Config) -> McpConfigStatus {
+    let vault_path = config.vault_path.display().to_string();
+    let state = config::Config::load_mcp_state(&vault_path);
+    let status = match &state {
+        Some(s) if s.transport == "streamable_http" && s.is_reachable() => "running",
+        Some(s) if s.transport == "streamable_http" => "stale",
+        Some(s) if s.transport == "stdio" => "stdio",
+        Some(_) => "unknown",
+        None => "not_running",
+    };
+    let address = state
+        .as_ref()
+        .filter(|s| s.transport == "streamable_http" && s.is_reachable())
+        .and_then(|s| s.local_url.clone());
+
+    McpConfigStatus {
+        status: status.into(),
+        transport: state.as_ref().map(|s| s.transport.clone()),
+        address,
+        local_url: state.as_ref().and_then(|s| s.local_url.clone()),
+        network_url: state.as_ref().and_then(|s| s.network_url.clone()),
+        pid: state.as_ref().map(|s| s.pid),
+        updated_at: state.as_ref().map(|s| s.updated_at.clone()),
+        command: format!("pearl serve --vault {}", vault_path),
+        network_command: format!("pearl serve --vault {} --network", vault_path),
+        state_file: config::Config::mcp_state_path(&vault_path)
+            .display()
+            .to_string(),
+    }
 }
 
 /// Interactive onboarding: write config to the global path (~/.config/pearl/config.toml).

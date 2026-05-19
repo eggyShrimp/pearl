@@ -12,6 +12,7 @@ use crate::core::chunker::{Chunk, build_embedding_input, chunk_markdown};
 use crate::core::embedder::{batch_size_for_provider, get_embeddings, get_embeddings_async};
 use crate::core::frontmatter::parse_frontmatter;
 use crate::core::fts::{FtsDocument, FtsEngine};
+use crate::core::graph::{GraphStore, extract_links};
 use crate::core::vault::{hash_content, scan_vault};
 use crate::core::vector_store::{ChunkMeta, VectorEntry, VectorIndex};
 
@@ -22,6 +23,8 @@ pub struct IndexStats {
     pub skipped: usize,
     pub deleted: usize,
     pub total_chunks: usize,
+    pub graph_nodes: usize,
+    pub graph_edges: usize,
 }
 
 /// Progress information emitted during indexing.
@@ -353,6 +356,51 @@ pub async fn index_vault_with_progress(
             .collect();
         fts.update(fts_docs, &deleted_paths)?;
     }
+
+    // ── Phase 3.5: Build/update link graph ────────────────────────────────────
+    let graph_store = GraphStore::open(&config.graph_db_path())?;
+
+    if force {
+        graph_store.clear()?;
+    }
+
+    // Build set of all known paths for wikilink resolution
+    let known_paths: HashSet<String> = files.iter().map(|f| f.path.clone()).collect();
+
+    // Remove graph entries for deleted files
+    for old_path in old_hashes.keys() {
+        if !current_paths.contains(old_path.as_str()) {
+            graph_store.remove_file(old_path)?;
+        }
+    }
+
+    // Extract and store links for changed files, or all files if graph is empty/force
+    let graph_needs_full_build = force
+        || graph_store
+            .stats()
+            .map(|s| s.edge_count == 0 && !files.is_empty())
+            .unwrap_or(true);
+    let graph_files = if graph_needs_full_build {
+        changed_files
+            .iter()
+            .chain(unchanged_files.iter())
+            .collect::<Vec<_>>()
+    } else {
+        changed_files.iter().collect::<Vec<_>>()
+    };
+
+    for file_data in &graph_files {
+        let links = extract_links(&file_data.content, &file_data.path, &known_paths);
+        graph_store.update_file_links(&file_data.path, &links)?;
+    }
+
+    let graph_stats = graph_store.stats()?;
+    stats.graph_nodes = graph_stats.node_count;
+    stats.graph_edges = graph_stats.edge_count;
+    info!(
+        "Graph updated: {} nodes, {} edges",
+        graph_stats.node_count, graph_stats.edge_count
+    );
 
     // ── Phase 4: Persist ───────────────────────────────────────────────────────
     let vi = vector_index.lock().await;

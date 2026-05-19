@@ -1,9 +1,12 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use serde::Serialize;
 
 use crate::config::Config;
 use crate::core::embedder::get_query_embedding;
 use crate::core::fts::FtsEngine;
+use crate::core::graph::GraphStore;
 use crate::core::vector_store::VectorIndex;
 
 #[derive(Debug, Clone, Serialize)]
@@ -19,14 +22,33 @@ pub struct SearchResult {
     pub match_type: String,
 }
 
-/// Execute hybrid search combining vector similarity + FTS.
+/// A linked note discovered via graph expansion of search results.
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkedNote {
+    pub path: String,
+    pub title: String,
+    pub related_to: String,
+}
+
+/// Combined search response: direct matches + graph-expanded context.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchResponse {
+    pub results: Vec<SearchResult>,
+    /// Notes linked to the search results (1-hop graph expansion).
+    /// Empty if graph index is not available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub linked_notes: Vec<LinkedNote>,
+}
+
+/// Execute hybrid search combining vector similarity + FTS, with automatic
+/// 1-hop graph expansion on top results for linked context.
 pub async fn hybrid_search(
     vault_path: &str,
     query: &str,
     limit: usize,
     folders: Option<Vec<String>>,
     tags: Option<Vec<String>>,
-) -> Result<Vec<SearchResult>> {
+) -> Result<SearchResponse> {
     let config = Config::new(vault_path);
 
     // Load vector index
@@ -39,9 +61,47 @@ pub async fn hybrid_search(
     let fts_results = fts_search(&config, query, limit * 2)?;
 
     // Merge results
-    let merged = merge_results(vector_results, fts_results, &config, limit);
+    let results = merge_results(vector_results, fts_results, &config, limit);
 
-    Ok(merged)
+    // Graph expansion: expand top results by 1 hop
+    let linked_notes = expand_with_graph(&config, &results);
+
+    Ok(SearchResponse {
+        results,
+        linked_notes,
+    })
+}
+
+/// Expand search results with 1-hop graph context.
+/// Returns linked notes not already in the result set.
+fn expand_with_graph(config: &Config, results: &[SearchResult]) -> Vec<LinkedNote> {
+    let store = match GraphStore::open(&config.graph_db_path()) {
+        Ok(s) => s,
+        Err(_) => return vec![], // Graph not available, graceful degradation
+    };
+
+    let result_paths: HashSet<&str> = results.iter().map(|r| r.path.as_str()).collect();
+    let mut seen: HashSet<String> = result_paths.iter().map(|p| p.to_string()).collect();
+    let mut linked_notes: Vec<LinkedNote> = Vec::new();
+
+    // Only expand top results to avoid noise
+    let expand_count = results.len().min(5);
+    for result in results.iter().take(expand_count) {
+        if let Ok(subgraph) = store.expand(&result.path, 1) {
+            for node in &subgraph.nodes {
+                if node.path != result.path && !seen.contains(&node.path) {
+                    seen.insert(node.path.clone());
+                    linked_notes.push(LinkedNote {
+                        path: node.path.clone(),
+                        title: node.title.clone(),
+                        related_to: result.path.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    linked_notes
 }
 
 /// Semantic-only search (vector similarity, no FTS).
