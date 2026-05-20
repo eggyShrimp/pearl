@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/eggyShrimp/pearl/releases"><img src="https://img.shields.io/github/v/release/eggyShrimp/pearl" alt="Release" /></a>
-  <a href="https://github.com/eggyShrimp/pearl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/eggyShrimp/pearl" alt="Unlicense" /></a>
+  <a href="https://github.com/eggyShrimp/pearl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/eggyShrimp/pearl" alt="MIT" /></a>
 </p>
 
 ---
@@ -99,4 +99,4 @@ cargo build --release
 
 ## License
 
-[Unlicense](LICENSE)
+[MIT](LICENSE)
