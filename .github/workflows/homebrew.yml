@@ -41,13 +41,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- Formula/vault-search.rb; then
+          if git diff --quiet -- Formula/pearl.rb; then
             echo "Formula already up to date"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/vault-search.rb
-          git commit -m "Update vault-search to ${TAG_NAME}"
+          git add Formula/pearl.rb
+          git commit -m "Update pearl to ${TAG_NAME}"
           git push

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${REPOSITORY:?REPOSITORY is required, for example eggyShrimp/vault-search}"
-: "${TAG_NAME:?TAG_NAME is required, for example v0.1.0}"
+: "${REPOSITORY:?REPOSITORY is required, for example eggyShrimp/pearl}"
+: "${TAG_NAME:?TAG_NAME is required, for example v0.2.0}"
 
 TAP_DIR="${TAP_DIR:-homebrew-tap}"
-FORMULA_PATH="${FORMULA_PATH:-${TAP_DIR}/Formula/vault-search.rb}"
+FORMULA_PATH="${FORMULA_PATH:-${TAP_DIR}/Formula/pearl.rb}"
 VERSION="${TAG_NAME#v}"
 BASE_URL="${BASE_URL:-https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}}"
 
 ASSETS=(
-  "vault-search-aarch64-apple-darwin.tar.gz"
-  "vault-search-aarch64-unknown-linux-gnu.tar.gz"
-  "vault-search-x86_64-unknown-linux-gnu.tar.gz"
+  "pearl-aarch64-apple-darwin.tar.gz"
+  "pearl-aarch64-unknown-linux-gnu.tar.gz"
+  "pearl-x86_64-unknown-linux-gnu.tar.gz"
 )
 
 sha256() {
@@ -51,46 +51,46 @@ for asset in "${ASSETS[@]}"; do
   fi
 done
 
-sha_macos_arm="$(sha256 "${WORKDIR}/vault-search-aarch64-apple-darwin.tar.gz")"
-sha_linux_arm="$(sha256 "${WORKDIR}/vault-search-aarch64-unknown-linux-gnu.tar.gz")"
-sha_linux_intel="$(sha256 "${WORKDIR}/vault-search-x86_64-unknown-linux-gnu.tar.gz")"
+sha_macos_arm="$(sha256 "${WORKDIR}/pearl-aarch64-apple-darwin.tar.gz")"
+sha_linux_arm="$(sha256 "${WORKDIR}/pearl-aarch64-unknown-linux-gnu.tar.gz")"
+sha_linux_intel="$(sha256 "${WORKDIR}/pearl-x86_64-unknown-linux-gnu.tar.gz")"
 
 mkdir -p "$(dirname "${FORMULA_PATH}")"
 cat > "${FORMULA_PATH}" <<EOF
 # typed: false
 # frozen_string_literal: true
 
-class VaultSearch < Formula
-  desc "Local-first semantic search MCP server for Obsidian vaults"
+class Pearl < Formula
+  desc "Local-first semantic search for Obsidian vaults"
   homepage "https://github.com/${REPOSITORY}"
   version "${VERSION}"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "${BASE_URL}/vault-search-aarch64-apple-darwin.tar.gz"
+      url "${BASE_URL}/pearl-aarch64-apple-darwin.tar.gz"
       sha256 "${sha_macos_arm}"
     end
   end
 
   on_linux do
     on_arm do
-      url "${BASE_URL}/vault-search-aarch64-unknown-linux-gnu.tar.gz"
+      url "${BASE_URL}/pearl-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "${sha_linux_arm}"
     end
 
     on_intel do
-      url "${BASE_URL}/vault-search-x86_64-unknown-linux-gnu.tar.gz"
+      url "${BASE_URL}/pearl-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "${sha_linux_intel}"
     end
   end
 
   def install
-    bin.install "vault-search"
+    bin.install "pearl"
   end
 
   test do
-    assert_match "vault-search", shell_output("#{bin}/vault-search --version")
+    assert_match "pearl", shell_output("\#{bin}/pearl --version")
   end
 end
 EOF
