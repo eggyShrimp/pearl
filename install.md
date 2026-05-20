@@ -1,7 +1,4 @@
-# Install Pearl (vault-search)
-
-This document is for agents. Follow it directly when a user asks you to install
-`pearl` (formerly `vault-search`).
+# Install Pearl
 
 ## Goal
 
@@ -21,16 +18,16 @@ Install the `pearl` binary and verify that the command is available.
 ```bash
 brew tap eggyShrimp/tap
 brew update
-brew install eggyShrimp/tap/vault-search
-vault-search --version
+brew install eggyShrimp/tap/pearl
+pearl --version
 ```
 
 If already installed, refresh it:
 
 ```bash
 brew update
-brew reinstall eggyShrimp/tap/vault-search
-vault-search --version
+brew reinstall eggyShrimp/tap/pearl
+pearl --version
 ```
 
 ### Method 2: Build from source (development)
@@ -70,17 +67,17 @@ After Homebrew installation, confirm it is using the release archive and not a
 source build:
 
 ```bash
-brew cat eggyShrimp/tap/vault-search
-brew deps eggyShrimp/tap/vault-search
+brew cat eggyShrimp/tap/pearl
+brew deps eggyShrimp/tap/pearl
 ```
 
 The formula must contain release URLs such as:
 
 ```text
-https://github.com/eggyShrimp/vault-search/releases/download/v0.1.0/vault-search-aarch64-apple-darwin.tar.gz
+https://github.com/eggyShrimp/pearl/releases/download/v0.1.0/pearl-aarch64-apple-darwin.tar.gz
 ```
 
-`brew deps eggyShrimp/tap/vault-search` should print no build dependency such as
+`brew deps eggyShrimp/tap/pearl` should print no build dependency such as
 `rust`.
 
 ## Post-install setup
@@ -88,17 +85,17 @@ https://github.com/eggyShrimp/vault-search/releases/download/v0.1.0/vault-search
 If the user wants to use an Obsidian vault immediately, run:
 
 ```bash
-vault-search init
-vault-search index
-vault-search search "test" --json
+pearl init
+pearl index
+pearl search "test" --json
 ```
 
 If the current directory is not inside an Obsidian vault, pass the vault path:
 
 ```bash
-vault-search init --vault /path/to/vault
-vault-search index --vault /path/to/vault
-vault-search search --vault /path/to/vault "test" --json
+pearl init --vault /path/to/vault
+pearl index --vault /path/to/vault
+pearl search --vault /path/to/vault "test" --json
 ```
 
 ## Failure handling

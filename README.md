@@ -1,63 +1,71 @@
-# vault-search
+<p align="center">
+  <img src="assets/logo.svg" alt="Pearl" width="200" />
+</p>
 
-Local-first semantic search for Obsidian vaults. `vault-search` indexes local
-Markdown notes and exposes hybrid search through a CLI and MCP server.
+<p align="center">
+  Local-first semantic search for Obsidian vaults.
+</p>
+
+<p align="center">
+  <a href="https://github.com/eggyShrimp/pearl/releases"><img src="https://img.shields.io/github/v/release/eggyShrimp/pearl" alt="Release" /></a>
+  <a href="https://github.com/eggyShrimp/pearl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/eggyShrimp/pearl" alt="License" /></a>
+</p>
+
+---
+
+**Pearl** indexes your local Markdown notes and exposes hybrid search (vector + full-text) through a CLI and an [MCP](https://modelcontextprotocol.io/) server, so AI agents and editors can search your vault semantically.
 
 ## Install
 
-For agent-driven installation, follow [install.md](install.md). The expected
-path is Homebrew installing the published release binary, not building from
-source.
-
-Quick install:
-
 ```bash
 brew tap eggyShrimp/tap
-brew install eggyShrimp/tap/vault-search
-vault-search --version
+brew install eggyShrimp/tap/pearl
+pearl --version
 ```
+
+For agent-driven installation details, see [install.md](install.md).
 
 ## Quick Start
 
 ```bash
-vault-search init
-vault-search index
-vault-search search "my query" --json
+pearl init                        # interactive setup
+pearl index                       # build index
+pearl search "my query" --json    # search
 ```
 
-If you are outside the vault directory, pass the vault path:
+If you are outside the vault directory, pass the vault path explicitly:
 
 ```bash
-vault-search init --vault /path/to/vault
-vault-search index --vault /path/to/vault
-vault-search search --vault /path/to/vault "my query" --json
+pearl init --vault /path/to/vault
+pearl index --vault /path/to/vault
+pearl search --vault /path/to/vault "my query" --json
 ```
 
 ## MCP Server
 
-Start the MCP server for an agent or editor:
+Start the MCP server for use with AI agents or editors:
 
 ```bash
-vault-search serve --vault /path/to/vault
+pearl serve --vault /path/to/vault
 ```
 
-Available tools:
+Exposed tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `hybrid_search` | Search notes with semantic and keyword matching |
-| `index_vault` | Refresh the vault index |
+| `hybrid_search` | Semantic + keyword search with folder/tag filters |
+| `index_vault` | Refresh the vault index (incremental or full) |
 | `get_note` | Read a note by relative path |
 | `list_notes` | List notes and folders |
-| `vault_status` | Check vault and embedding status |
+| `vault_status` | Check vault health, embedding service, and config |
 
 ## Configuration
 
-Config lives in the vault at `.vault-mcp/config.toml`.
+Config lives at `{vault}/.vault-mcp/config.toml`. Run `pearl init` to generate it interactively.
 
 ```toml
 [embedding]
-provider = "ollama"
+provider = "ollama"              # ollama | openai | custom
 endpoint = "http://localhost:11434"
 model = "bge-m3"
 
@@ -67,7 +75,7 @@ fts_weight = 0.3
 default_limit = 10
 ```
 
-Environment overrides:
+Environment variable overrides:
 
 | Variable | Purpose |
 | --- | --- |
@@ -79,10 +87,13 @@ Environment overrides:
 
 ## Build From Source
 
-Users should normally install the release binary with Homebrew. For development:
+Most users should install with Homebrew. For development:
 
 ```bash
 cargo build --release
+# Binary at target/release/pearl
 ```
 
-The binary is written to `target/release/vault-search`.
+## License
+
+[MIT](LICENSE)
