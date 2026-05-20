@@ -1,14 +1,17 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="Pearl" width="200" />
-</p>
-
-<p align="center">
-  Local-first semantic search for Obsidian vaults.
-</p>
+<div align="center">
+<pre>
+                       _
+ _ __   ___  __ _ _ __| |
+| '_ \ / _ \/ _` | '__| |
+| |_) |  __/ (_| | |  | |
+| .__/ \___|\__,_|_|  |_|
+|_|
+</pre>
+</div>
 
 <p align="center">
   <a href="https://github.com/eggyShrimp/pearl/releases"><img src="https://img.shields.io/github/v/release/eggyShrimp/pearl" alt="Release" /></a>
-  <a href="https://github.com/eggyShrimp/pearl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/eggyShrimp/pearl" alt="License" /></a>
+  <a href="https://github.com/eggyShrimp/pearl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/eggyShrimp/pearl" alt="Unlicense" /></a>
 </p>
 
 ---
@@ -96,4 +99,4 @@ cargo build --release
 
 ## License
 
-[MIT](LICENSE)
+[Unlicense](LICENSE)
