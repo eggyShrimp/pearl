@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorEntry {
@@ -35,6 +36,7 @@ impl VectorIndex {
             let data = fs::read(&bin_path).context("Failed to read vector index (bincode)")?;
             let index: VectorIndex =
                 bincode::deserialize(&data).context("Failed to deserialize vector index")?;
+            debug!(entries = index.entries.len(), "vector index loaded (bincode)");
             return Ok(index);
         }
 
@@ -43,6 +45,7 @@ impl VectorIndex {
             let data = fs::read_to_string(path).context("Failed to read vector index (json)")?;
             let index: VectorIndex =
                 serde_json::from_str(&data).context("Failed to parse vector index (json)")?;
+            debug!(entries = index.entries.len(), "vector index loaded (json, migrating)");
             // Auto-migrate: save as bincode, remove old JSON
             if let Ok(()) = index.save(path) {
                 // Remove legacy JSON file after successful migration
@@ -51,17 +54,21 @@ impl VectorIndex {
             return Ok(index);
         }
 
+        debug!("vector index not found, starting empty");
         Ok(Self::default())
     }
 
-    /// Save index to disk in bincode format.
+    /// Save index to disk in bincode format (atomic: write to temp, then rename).
     pub fn save(&self, path: &Path) -> Result<()> {
         let bin_path = Self::bin_path(path);
         if let Some(parent) = bin_path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let tmp_path = bin_path.with_extension("bin.tmp");
         let data = bincode::serialize(self).context("Failed to serialize vector index")?;
-        fs::write(&bin_path, data)?;
+        fs::write(&tmp_path, data)?;
+        fs::rename(&tmp_path, &bin_path)?;
+        debug!(entries = self.entries.len(), "vector index saved");
         Ok(())
     }
 
@@ -72,17 +79,21 @@ impl VectorIndex {
 
     /// Add entries.
     pub fn add_entries(&mut self, entries: Vec<VectorEntry>) {
+        let count = entries.len();
         self.entries.extend(entries);
+        info!(count, total = self.entries.len(), "entries added to vector index");
     }
 
     /// Query the index with a vector, returning top-K results by cosine similarity.
     pub fn query(&self, query_vec: &[f32], limit: usize) -> Vec<SearchHit> {
         if self.entries.is_empty() {
+            debug!("vector query on empty index, returning 0 results");
             return vec![];
         }
 
         let query_norm = vec_norm(query_vec);
         if query_norm == 0.0 {
+            debug!("zero-norm query vector, returning 0 results");
             return vec![];
         }
 
@@ -99,14 +110,17 @@ impl VectorIndex {
         // Sort by score descending
         scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        scores
+        let results: Vec<SearchHit> = scores
             .into_iter()
             .take(limit)
             .map(|(i, score)| SearchHit {
                 metadata: self.entries[i].metadata.clone(),
                 score,
             })
-            .collect()
+            .collect();
+
+        debug!(result_count = results.len(), total_entries = self.entries.len(), "vector query completed");
+        results
     }
 
     /// Derive the bincode file path from the legacy JSON path.

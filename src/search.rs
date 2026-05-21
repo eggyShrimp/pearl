@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use serde::Serialize;
+use tracing::{debug, info};
 
 use crate::config::Config;
 use crate::core::embedder::get_query_embedding;
@@ -49,6 +50,7 @@ pub async fn hybrid_search(
     folders: Option<Vec<String>>,
     tags: Option<Vec<String>>,
 ) -> Result<SearchResponse> {
+    info!(query, limit, "hybrid_search started");
     let config = Config::new(vault_path);
 
     // Load vector index
@@ -66,6 +68,12 @@ pub async fn hybrid_search(
     // Graph expansion: expand top results by 1 hop
     let linked_notes = expand_with_graph(&config, &results);
 
+    info!(
+        query,
+        result_count = results.len(),
+        linked_count = linked_notes.len(),
+        "hybrid_search completed"
+    );
     Ok(SearchResponse {
         results,
         linked_notes,
@@ -112,9 +120,12 @@ pub async fn vector_search_only(
     folders: Option<Vec<String>>,
     tags: Option<Vec<String>>,
 ) -> Result<Vec<SearchResult>> {
+    info!(query, limit, "vector_search_only started");
     let config = Config::new(vault_path);
     let vector_index = VectorIndex::load(&config.vectors_path())?;
-    vector_search(&config, &vector_index, query, limit, &folders, &tags)
+    let results = vector_search(&config, &vector_index, query, limit, &folders, &tags)?;
+    info!(query, result_count = results.len(), "vector_search_only completed");
+    Ok(results)
 }
 
 /// Full-text search only (keyword matching, no embeddings).
@@ -123,8 +134,11 @@ pub async fn fts_search_only(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
+    info!(query, limit, "fts_search_only started");
     let config = Config::new(vault_path);
-    fts_search(&config, query, limit)
+    let results = fts_search(&config, query, limit)?;
+    info!(query, result_count = results.len(), "fts_search_only completed");
+    Ok(results)
 }
 
 fn vector_search(
@@ -166,22 +180,29 @@ fn vector_search(
             }
             true
         })
-        .map(|hit| SearchResult {
-            path: hit.metadata.path,
-            title: hit.metadata.title,
-            chunk: hit.metadata.text,
-            score: hit.score,
-            start_line: hit.metadata.start_line,
-            end_line: hit.metadata.end_line,
-            tags: hit
-                .metadata
-                .tags
-                .split(',')
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect(),
-            heading: hit.metadata.heading,
-            match_type: "semantic".to_string(),
+        .map(|hit| {
+            debug!(
+                path = %hit.metadata.path,
+                score = hit.score,
+                "vector result"
+            );
+            SearchResult {
+                path: hit.metadata.path,
+                title: hit.metadata.title,
+                chunk: hit.metadata.text,
+                score: hit.score,
+                start_line: hit.metadata.start_line,
+                end_line: hit.metadata.end_line,
+                tags: hit
+                    .metadata
+                    .tags
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect(),
+                heading: hit.metadata.heading,
+                match_type: "semantic".to_string(),
+            }
         })
         .collect();
 
@@ -198,16 +219,23 @@ fn fts_search(config: &Config, query: &str, limit: usize) -> Result<Vec<SearchRe
 
     Ok(hits
         .into_iter()
-        .map(|hit| SearchResult {
-            path: hit.path,
-            title: hit.title,
-            chunk: String::new(),
-            score: hit.score,
-            start_line: 0,
-            end_line: 0,
-            tags: vec![],
-            heading: String::new(),
-            match_type: "fts".to_string(),
+        .map(|hit| {
+            debug!(
+                path = %hit.path,
+                score = hit.score,
+                "fts result"
+            );
+            SearchResult {
+                path: hit.path,
+                title: hit.title,
+                chunk: String::new(),
+                score: hit.score,
+                start_line: 0,
+                end_line: 0,
+                tags: vec![],
+                heading: String::new(),
+                match_type: "fts".to_string(),
+            }
         })
         .collect())
 }

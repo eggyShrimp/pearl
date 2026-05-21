@@ -46,27 +46,49 @@ pub fn get_embeddings(config: &EmbeddingConfig, texts: &[String]) -> Result<Vec<
     let batch_size = batch_size_for_provider(&config.provider);
     let mut all_embeddings = Vec::new();
 
-    for chunk in texts.chunks(batch_size) {
+    let mut client_builder =
+        reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(120));
+    if config.provider == EmbeddingProvider::Ollama {
+        client_builder = client_builder.danger_accept_invalid_certs(true);
+    }
+    let client = client_builder
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    for (batch_idx, chunk) in texts.chunks(batch_size).enumerate() {
         let request = EmbeddingRequest {
             model: config.model.clone(),
             input: chunk.to_vec(),
             dimensions: config.dimensions,
         };
 
-        let mut req = ureq::post(&url).header("Content-Type", "application/json");
+        let mut req = client.post(&url).header("Content-Type", "application/json");
 
         if let Some(ref auth) = auth_header {
             req = req.header("Authorization", auth);
         }
 
-        let response: EmbeddingResponse = req
-            .send_json(&request)
-            .context("Failed to call embedding API")?
-            .body_mut()
-            .read_json()
-            .context("Failed to parse embedding response")?;
+        let response = req
+            .json(&request)
+            .send()
+            .with_context(|| format!("Failed to call embedding API (batch {})", batch_idx))?;
 
-        for data in response.data {
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            bail!(
+                "Embedding API returned {} (batch {}): {}",
+                status,
+                batch_idx,
+                body.chars().take(200).collect::<String>()
+            );
+        }
+
+        let resp: EmbeddingResponse = response.json().with_context(|| {
+            format!("Failed to parse embedding response (batch {})", batch_idx)
+        })?;
+
+        for data in resp.data {
             all_embeddings.push(data.embedding);
         }
     }
@@ -232,7 +254,16 @@ pub fn batch_size_for_provider(provider: &EmbeddingProvider) -> usize {
 fn check_ollama_health(config: &EmbeddingConfig) -> HealthStatus {
     let tags_url = format!("{}/api/tags", config.endpoint);
 
-    let mut response = match ureq::get(&tags_url).call() {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return HealthStatus::Unreachable(format!("Failed to build HTTP client: {}", e)),
+    };
+
+    let response = match client.get(&tags_url).send() {
         Ok(r) => r,
         Err(e) => {
             return HealthStatus::Unreachable(format!(
@@ -242,7 +273,7 @@ fn check_ollama_health(config: &EmbeddingConfig) -> HealthStatus {
         }
     };
 
-    let tags: OllamaTagsResponse = match response.body_mut().read_json() {
+    let tags: OllamaTagsResponse = match response.json() {
         Ok(t) => t,
         Err(_) => return HealthStatus::Ok, // Non-standard response, assume OK
     };
@@ -348,9 +379,13 @@ fn normalize_ollama_host(host: &str) -> String {
 /// Quick probe: try to reach Ollama's /api/tags endpoint with a short timeout.
 fn probe_ollama(endpoint: &str) -> bool {
     let url = format!("{}/api/tags", endpoint);
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_millis(800)))
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(800))
+        .danger_accept_invalid_certs(true)
         .build()
-        .new_agent();
-    agent.get(&url).call().is_ok()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client.get(&url).send().is_ok()
 }

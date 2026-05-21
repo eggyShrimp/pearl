@@ -296,7 +296,7 @@ impl Config {
             .and_then(|i| i.max_chunk_tokens)
             .unwrap_or(400);
 
-        Config {
+        let mut config = Config {
             vault_path: vault,
             embedding,
             index: IndexConfig {
@@ -304,6 +304,63 @@ impl Config {
                 max_chunk_tokens,
             },
             search,
+        };
+        config.validate();
+        config
+    }
+
+    fn validate(&mut self) {
+        use tracing::warn;
+
+        // max_chunk_tokens must be > 0
+        if self.index.max_chunk_tokens == 0 {
+            warn!("max_chunk_tokens is 0, resetting to default (400)");
+            self.index.max_chunk_tokens = 400;
+        }
+
+        // default_limit must be > 0
+        if self.search.default_limit == 0 {
+            warn!("default_limit is 0, resetting to default (10)");
+            self.search.default_limit = 10;
+        }
+
+        // Weights must be non-negative
+        if self.search.vector_weight < 0.0 {
+            warn!("vector_weight is negative ({}), clamping to 0", self.search.vector_weight);
+            self.search.vector_weight = 0.0;
+        }
+        if self.search.fts_weight < 0.0 {
+            warn!("fts_weight is negative ({}), clamping to 0", self.search.fts_weight);
+            self.search.fts_weight = 0.0;
+        }
+
+        // Warn if weights don't sum to 1.0 (not fatal, but unexpected)
+        let weight_sum = self.search.vector_weight + self.search.fts_weight;
+        if (weight_sum - 1.0).abs() > 0.01 && weight_sum > 0.0 {
+            warn!(
+                "vector_weight ({}) + fts_weight ({}) = {}, expected 1.0",
+                self.search.vector_weight, self.search.fts_weight, weight_sum
+            );
+        }
+
+        // Model should not be empty
+        if self.embedding.model.trim().is_empty() {
+            warn!("embedding model is empty, resetting to default");
+            self.embedding.model = match self.embedding.provider {
+                EmbeddingProvider::Ollama => "bge-m3".into(),
+                EmbeddingProvider::Openai => "text-embedding-3-small".into(),
+                EmbeddingProvider::Custom => "custom-model".into(),
+            };
+        }
+
+        // Endpoint should look like a URL
+        if !self.embedding.endpoint.starts_with("http://")
+            && !self.embedding.endpoint.starts_with("https://")
+        {
+            warn!(
+                "embedding endpoint '{}' does not start with http:// or https://",
+                self.embedding.endpoint
+            );
         }
     }
 

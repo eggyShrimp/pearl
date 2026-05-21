@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::config::Config;
 use crate::core::chunker::{Chunk, build_embedding_input, chunk_markdown};
@@ -71,6 +71,7 @@ pub async fn index_vault_with_progress(
     fs::create_dir_all(&config.index.data_dir)?;
 
     let files = scan_vault(&config.vault_path);
+    info!(total_files = files.len(), "index_vault started");
 
     // Detect dimension mismatch: if existing vectors have a different dimension
     // than the configured model, force a full reindex.
@@ -261,15 +262,24 @@ pub async fn index_vault_with_progress(
         // Chunk
         let chunks = chunk_markdown(body, &title, config.index.max_chunk_tokens);
 
-        // Add chunks to the batch queue
+        // Collect FTS document for this changed file (before consuming chunks)
+        fts_docs.push(FtsDocument {
+            path: file_data.path.clone(),
+            title: title.clone(),
+            body: body.to_string(),
+            tags: meta.tags.join(" "),
+        });
+
+        // Add chunks to the batch queue — consume chunks to avoid cloning text
         let tags_str = meta.tags.join(",");
-        for chunk in &chunks {
-            let embedding_input = build_embedding_input(chunk);
+        let chunk_count = chunks.len();
+        for chunk in chunks {
+            let embedding_input = build_embedding_input(&chunk);
             pending_batch.push(PendingChunk {
                 file_path: file_data.path.clone(),
                 title: title.clone(),
                 tags: tags_str.clone(),
-                chunk: chunk.clone(),
+                chunk,
                 embedding_input,
             });
 
@@ -278,17 +288,10 @@ pub async fn index_vault_with_progress(
                 let batch = EmbeddingBatch {
                     chunks: std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size)),
                 };
+                debug!(batch_size = batch.chunks.len(), "sending embedding batch");
                 tx.send(batch).await.ok();
             }
         }
-
-        // Collect FTS document for this changed file
-        fts_docs.push(FtsDocument {
-            path: file_data.path.clone(),
-            title: title.clone(),
-            body: body.to_string(),
-            tags: meta.tags.join(" "),
-        });
 
         stats.indexed += 1;
 
@@ -296,10 +299,10 @@ pub async fn index_vault_with_progress(
             current: idx + 1,
             total: total_to_index,
             path: file_data.path.clone(),
-            chunks: chunks.len(),
+            chunks: chunk_count,
         });
 
-        info!("Indexed: {} ({} chunks)", file_data.path, chunks.len());
+        info!(path = %file_data.path, chunks = chunk_count, "file indexed");
     }
 
     // Send remaining chunks
@@ -307,6 +310,7 @@ pub async fn index_vault_with_progress(
         let batch = EmbeddingBatch {
             chunks: pending_batch,
         };
+        debug!(batch_size = batch.chunks.len(), "sending final embedding batch");
         tx.send(batch).await.ok();
     }
 
@@ -317,6 +321,12 @@ pub async fn index_vault_with_progress(
     consumer_handle.await?;
 
     stats.total_chunks = chunk_counter.load(std::sync::atomic::Ordering::Relaxed);
+    info!(
+        total_chunks = stats.total_chunks,
+        indexed = stats.indexed,
+        skipped = stats.skipped,
+        "embedding phase completed"
+    );
 
     // ── Phase 3: Incremental FTS update ────────────────────────────────────────
     let fts = FtsEngine::open(&config.tantivy_path())?;
@@ -358,6 +368,7 @@ pub async fn index_vault_with_progress(
     }
 
     // ── Phase 3.5: Build/update link graph ────────────────────────────────────
+    info!("FTS index updated, building link graph");
     let graph_store = GraphStore::open(&config.graph_db_path())?;
 
     if force {
@@ -398,11 +409,13 @@ pub async fn index_vault_with_progress(
     stats.graph_nodes = graph_stats.node_count;
     stats.graph_edges = graph_stats.edge_count;
     info!(
-        "Graph updated: {} nodes, {} edges",
-        graph_stats.node_count, graph_stats.edge_count
+        nodes = graph_stats.node_count,
+        edges = graph_stats.edge_count,
+        "graph updated"
     );
 
     // ── Phase 4: Persist ───────────────────────────────────────────────────────
+    info!("persisting vector index and hashes");
     let vi = vector_index.lock().await;
     vi.save(&config.vectors_path())?;
     save_hashes(&config.hashes_path(), &new_hashes)?;
@@ -465,7 +478,9 @@ fn save_hashes(path: &Path, hashes: &HashMap<String, String>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let tmp_path = path.with_extension("json.tmp");
     let data = serde_json::to_string_pretty(hashes)?;
-    fs::write(path, data)?;
+    fs::write(&tmp_path, data)?;
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }

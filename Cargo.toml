@@ -34,8 +34,7 @@ pulldown-cmark = "0.12"
 serde_yml = "0.0.12"
 
 # Embedding & HTTP
-ureq = { version = "3", features = ["json"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 
 # Full-text search
 tantivy = "0.22"
