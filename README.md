@@ -26,7 +26,9 @@ brew install eggyShrimp/tap/pearl
 pearl --version
 ```
 
-For agent-driven installation details, see [install.md](install.md).
+```text
+Read https://raw.githubusercontent.com/eggyShrimp/pearl/main/install.md and follow the steps to install the pearl binary. After installation, run `pearl --version` to verify it works.
+```
 
 ## Quick Start
 

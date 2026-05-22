@@ -1,28 +1,28 @@
 ---
-name: vault-search
-description: Semantic search over Obsidian vaults using vault-search CLI. Use when the user asks to search their notes, find related content, look up something in their vault, or needs context from their knowledge base. Supports hybrid (vector + keyword), semantic-only, and full-text search with folder/tag filtering.
+name: pearl
+description: Semantic search over Obsidian vaults using pearl CLI. Use when the user asks to search their notes, find related content, look up something in their vault, or needs context from their knowledge base. Supports hybrid (vector + keyword), semantic-only, and full-text search with folder/tag filtering.
 ---
 
-# vault-search CLI
+# pearl CLI
 
 Local-first semantic search for Obsidian vaults. Combines vector similarity (embeddings) with full-text keyword search to find relevant notes.
 
-Binary: `vault-search` (must be installed and vault must be indexed).
+Binary: `pearl` (must be installed and vault must be indexed).
 
 ## Core workflow
 
 ```bash
 # Search (primary use case)
-vault-search search "your query" --json
+pearl search "your query" --json
 
 # Ensure index is fresh (run if search returns stale/no results)
-vault-search index
+pearl index
 ```
 
 ## Search command
 
 ```bash
-vault-search search [OPTIONS] <QUERY>
+pearl search [OPTIONS] <QUERY>
 ```
 
 ### Key options
@@ -65,66 +65,66 @@ Each result in the JSON array:
 ### Find notes about a topic
 
 ```bash
-vault-search search -k 5 --json "how does RAG work"
+pearl search -k 5 --json "how does RAG work"
 ```
 
 ### Semantic search (meaning-based, good for concepts)
 
 ```bash
-vault-search search -m semantic --json "strategies for reducing hallucination"
+pearl search -m semantic --json "strategies for reducing hallucination"
 ```
 
 ### Keyword search (exact terms, good for names/identifiers)
 
 ```bash
-vault-search search -m fts --json "LangChain LCEL"
+pearl search -m fts --json "LangChain LCEL"
 ```
 
 ### Search within a folder
 
 ```bash
-vault-search search -f projects/ -k 3 --json "deployment pipeline"
+pearl search -f projects/ -k 3 --json "deployment pipeline"
 ```
 
 ### Search excluding archive
 
 ```bash
-vault-search search -e archive/ -e templates/ --json "weekly review"
+pearl search -e archive/ -e templates/ --json "weekly review"
 ```
 
 ### Find recent notes on a topic
 
 ```bash
-vault-search search --since 2025-01-01 --json "product roadmap"
+pearl search --since 2025-01-01 --json "product roadmap"
 ```
 
 ### High-confidence results only
 
 ```bash
-vault-search search --threshold 0.5 -k 20 --json "authentication flow"
+pearl search --threshold 0.5 -k 20 --json "authentication flow"
 ```
 
 ### Get context lines for precise location
 
 ```bash
-vault-search search -C 3 "error handling"
+pearl search -C 3 "error handling"
 ```
 
 ### Read a specific note after finding it
 
 ```bash
 # Search returns path, then read the file directly
-cat "$(vault-search search -k 1 --json 'topic' | jq -r '.[0].path')"
+cat "$(pearl search -k 1 --json 'topic' | jq -r '.[0].path')"
 ```
 
 ## Index management
 
 ```bash
 # Incremental index (only changed files, fast)
-vault-search index
+pearl index
 
 # Full reindex (after switching embedding model)
-vault-search index --force
+pearl index --force
 ```
 
 The watcher auto-starts in the background when `index` runs, keeping the index fresh as files change.
@@ -132,10 +132,10 @@ The watcher auto-starts in the background when `index` runs, keeping the index f
 ## Watcher (auto-indexing)
 
 ```bash
-vault-search watch            # Foreground
-vault-search watch --daemon   # Background daemon
-vault-search watch --status   # Check if running
-vault-search watch --stop     # Stop daemon
+pearl watch            # Foreground
+pearl watch --daemon   # Background daemon
+pearl watch --status   # Check if running
+pearl watch --stop     # Stop daemon
 ```
 
 The watcher monitors `.md` files, debounces changes (2s), and runs incremental indexing. Other commands auto-spawn the watcher if not running.
@@ -155,5 +155,5 @@ The watcher monitors `.md` files, debounces changes (2s), and runs incremental i
 - Always use `--json` when processing results programmatically
 - Use `-k` generously (e.g. `-k 20`) with `--threshold` to get high-quality results without artificial limits
 - Combine `-f` and `-e` for precise scoping in large vaults
-- If results seem stale, run `vault-search index` to refresh
+- If results seem stale, run `pearl index` to refresh
 - The vault path is auto-detected (walks up from CWD looking for `.obsidian` or `.vault-mcp`)
