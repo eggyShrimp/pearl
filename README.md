@@ -18,6 +18,23 @@
 
 **Pearl** indexes your local Markdown notes and exposes hybrid search (vector + full-text) through a CLI and an [MCP](https://modelcontextprotocol.io/) server, so AI agents and editors can search your vault semantically.
 
+## Why Pearl?
+
+**You have thousands of notes in Obsidian, but the built-in search can't find what you're thinking of.**
+
+- You remember writing about "reducing hallucination in RAG pipelines", but search for "hallucination" returns nothing — because the note says "factuality" instead.
+- You want your AI coding agent to automatically pull context from your notes, but there's no local-first MCP tool for that.
+- You use ripgrep to search notes, but it only matches exact strings — it won't connect "CAP theorem" with "distributed systems tradeoffs".
+
+Pearl combines **vector similarity** (understanding meaning) with **full-text search** (matching exact terms), exposed through a CLI and an MCP server — so both you and your agents can search your vault semantically.
+
+| Use case | What Pearl does |
+|----------|----------------|
+| "Where did I write that?" | Finds conceptually related notes even with different wording |
+| Agent-powered workflows | AI agents search your vault via MCP without leaving the editor |
+| Code + notes context | Pull design decisions from your vault into your coding workflow |
+| Knowledge exploration | Surface related notes you forgot about |
+
 ## Install
 
 ```bash
@@ -98,6 +115,17 @@ Most users should install with Homebrew. For development:
 cargo build --release
 # Binary at target/release/pearl
 ```
+
+## Comparison
+
+| Feature | Pearl | Obsidian Search | grep / ripgrep | Obsidian Copilot |
+|---------|-------|-----------------|----------------|------------------|
+| Semantic search | ✅ | ❌ | ❌ | ✅ |
+| Full-text search | ✅ | ✅ | ✅ | ❌ |
+| MCP server | ✅ | ❌ | ❌ | ❌ |
+| Local-first | ✅ | ✅ | ✅ | ❌ (cloud API) |
+| Obsidian-native | ✅ | ✅ | ❌ | ✅ |
+| CLI interface | ✅ | ❌ | ✅ | ❌ |
 
 ## License
 
