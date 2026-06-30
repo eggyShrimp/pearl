@@ -300,7 +300,6 @@ pub fn daemonize_watch(vault_path: &str) -> Result<()> {
     let stderr = stdout.try_clone()?;
 
     let daemon = daemonize::Daemonize::new()
-        .pid_file(pid_file_path(vault_path))
         .working_directory(vault_path)
         .stdout(stdout)
         .stderr(stderr);
@@ -349,5 +348,75 @@ pub fn stop_watch(vault_path: &str) -> Result<()> {
         Err(_) => {
             anyhow::bail!("Watcher is not running (no pid file found)");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pid_file_path_correct() {
+        let path = pid_file_path("/vault");
+        assert_eq!(path, Path::new("/vault/.vault-mcp/watch.pid"));
+    }
+
+    #[test]
+    fn is_watch_running_no_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+        assert!(!is_watch_running(vault));
+    }
+
+    #[test]
+    fn is_watch_running_stale_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+
+        // Write a PID that's almost certainly not running (PID 999999999)
+        let pid_path = pid_file_path(vault);
+        fs::create_dir_all(pid_path.parent().unwrap()).unwrap();
+        fs::write(&pid_path, "999999999").unwrap();
+
+        assert!(!is_watch_running(vault));
+    }
+
+    #[test]
+    fn write_and_remove_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+
+        write_pid_file(vault).unwrap();
+        let pid_path = pid_file_path(vault);
+        assert!(pid_path.exists());
+
+        let content = fs::read_to_string(&pid_path).unwrap();
+        let pid: u32 = content.trim().parse().unwrap();
+        assert_eq!(pid, std::process::id());
+
+        remove_pid_file(vault);
+        assert!(!pid_path.exists());
+    }
+
+    #[test]
+    fn stop_watch_no_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+        assert!(stop_watch(vault).is_err());
+    }
+
+    #[test]
+    fn stop_watch_stale_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+
+        let pid_path = pid_file_path(vault);
+        fs::create_dir_all(pid_path.parent().unwrap()).unwrap();
+        fs::write(&pid_path, "999999999").unwrap();
+
+        let result = stop_watch(vault);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stale"));
+        assert!(!pid_path.exists()); // cleaned up
     }
 }
