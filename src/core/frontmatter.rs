@@ -126,3 +126,120 @@ fn extract_first_paragraph(lines: &[&str]) -> Option<String> {
         text
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_frontmatter ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_frontmatter_with_tags_list() {
+        let content = "---\ntitle: Test\ntags:\n  - ai\n  - rust\n---\nBody here.";
+        let (meta, body_start) = parse_frontmatter(content);
+        assert_eq!(meta.title.as_deref(), Some("Test"));
+        assert_eq!(meta.tags, vec!["ai", "rust"]);
+        assert!(body_start > 0);
+        assert!(content[body_start..].starts_with("Body here."));
+    }
+
+    #[test]
+    fn parse_frontmatter_with_single_tag() {
+        let content = "---\ntitle: Note\ntags: single\n---\nBody.";
+        let (meta, _) = parse_frontmatter(content);
+        // single "tags" field should be parsed as a single-element list
+        assert_eq!(meta.tags, vec!["single"]);
+    }
+
+    #[test]
+    fn parse_frontmatter_no_frontmatter() {
+        let content = "Just plain markdown.\nNo frontmatter.";
+        let (meta, body_start) = parse_frontmatter(content);
+        assert_eq!(body_start, 0);
+        assert!(meta.title.is_none());
+        assert!(meta.tags.is_empty());
+    }
+
+    #[test]
+    fn parse_frontmatter_empty() {
+        let content = "";
+        let (meta, body_start) = parse_frontmatter(content);
+        assert_eq!(body_start, 0);
+        assert!(meta.title.is_none());
+    }
+
+    #[test]
+    fn parse_frontmatter_with_summary() {
+        let content = "---\ntitle: T\nsummary: Custom summary\n---\nBody.";
+        let (meta, _) = parse_frontmatter(content);
+        assert_eq!(meta.summary.as_deref(), Some("Custom summary"));
+    }
+
+    #[test]
+    fn parse_frontmatter_auto_summary() {
+        let content = "---\ntitle: T\n---\n\nFirst paragraph content here.\n\nSecond paragraph.";
+        let (meta, _) = parse_frontmatter(content);
+        assert!(meta.summary.is_some());
+        assert!(meta.summary.unwrap().contains("First paragraph"));
+    }
+
+    #[test]
+    fn parse_frontmatter_tags_lowercased() {
+        let content = "---\ntags:\n  - AI\n  - Rust\n---\nBody.";
+        let (meta, _) = parse_frontmatter(content);
+        assert_eq!(meta.tags, vec!["ai", "rust"]);
+    }
+
+    #[test]
+    fn parse_frontmatter_unclosed() {
+        let content = "---\ntitle: T\nNo closing delimiter";
+        let (_meta, body_start) = parse_frontmatter(content);
+        // Unclosed frontmatter → treated as no frontmatter
+        assert_eq!(body_start, 0);
+    }
+
+    // ── extract_first_paragraph ──────────────────────────────────────────────
+
+    #[test]
+    fn extract_first_paragraph_basic() {
+        let lines = vec!["", "First paragraph.", "", "Second."];
+        let result = extract_first_paragraph(&lines);
+        assert_eq!(result.as_deref(), Some("First paragraph."));
+    }
+
+    #[test]
+    fn extract_first_paragraph_skips_headings() {
+        let lines = vec!["# Title", "", "Actual content."];
+        let result = extract_first_paragraph(&lines);
+        assert_eq!(result.as_deref(), Some("Actual content."));
+    }
+
+    #[test]
+    fn extract_first_paragraph_empty() {
+        let lines: Vec<&str> = vec![];
+        assert!(extract_first_paragraph(&lines).is_none());
+    }
+
+    #[test]
+    fn extract_first_paragraph_only_headings() {
+        let lines = vec!["# H1", "## H2", "### H3"];
+        assert!(extract_first_paragraph(&lines).is_none());
+    }
+
+    #[test]
+    fn extract_first_paragraph_truncates_long() {
+        let long_text = "a".repeat(300);
+        let lines = vec![&long_text[..], "next paragraph"];
+        let result = extract_first_paragraph(&lines);
+        let text = result.unwrap();
+        assert!(text.len() <= 253); // 250 + "..."
+        assert!(text.ends_with("..."));
+    }
+
+    #[test]
+    fn extract_first_paragraph_multiline() {
+        let lines = vec!["Line one.", "Line two.", "", "Other."];
+        let result = extract_first_paragraph(&lines);
+        assert_eq!(result.as_deref(), Some("Line one. Line two."));
+    }
+}

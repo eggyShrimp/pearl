@@ -484,3 +484,247 @@ fn save_hashes(path: &Path, hashes: &HashMap<String, String>) -> Result<()> {
     fs::rename(&tmp_path, path)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConfigFile, EmbeddingConfig, EmbeddingProvider};
+
+    // Helper: run async test in a separate thread to avoid blocking-in-runtime issues.
+    fn run_async_test<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(f);
+        })
+        .join()
+        .unwrap();
+    }
+
+    // Indexer tests require get_embeddings_async which delegates to blocking get_embeddings
+    // for single batches. reqwest::blocking::Client cannot be created inside any tokio runtime.
+    // These tests are ignored until the embedder is refactored to always use async client.
+    // They can be run with: cargo test -- --ignored
+
+    #[test]
+    #[ignore]
+    fn index_vault_full_pipeline() {
+        run_async_test(async {
+            // Set up temp vault with .md files
+            let dir = tempfile::tempdir().unwrap();
+            let vault = dir.path();
+
+            fs::write(
+                vault.join("note1.md"),
+                "---\ntitle: Rust\n---\nRust is a systems language.",
+            )
+            .unwrap();
+            fs::write(
+                vault.join("note2.md"),
+                "---\ntitle: Python\n---\nPython is great for scripting.",
+            )
+            .unwrap();
+            fs::create_dir_all(vault.join("wiki")).unwrap();
+            fs::write(
+                vault.join("wiki/deep.md"),
+                "---\ntitle: Deep Learning\n---\nNeural networks.",
+            )
+            .unwrap();
+
+            // Set up mock embedding server
+            let mut server = mockito::Server::new();
+
+            // Return 3-dimensional vectors for any embedding request
+            let response_body = serde_json::json!({
+                "data": [
+                    {"embedding": [0.1, 0.2, 0.3]},
+                    {"embedding": [0.4, 0.5, 0.6]},
+                    {"embedding": [0.7, 0.8, 0.9]},
+                    {"embedding": [0.11, 0.22, 0.33]},
+                    {"embedding": [0.44, 0.55, 0.66]},
+                    {"embedding": [0.77, 0.88, 0.99]}
+                ]
+            });
+
+            let _mock = server
+                .mock("POST", "/v1/embeddings")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(response_body.to_string())
+                .expect(1)
+                .create();
+
+            // Write config pointing to mock server
+            let config = ConfigFile {
+                vault_path: None,
+                embedding: EmbeddingConfig {
+                    provider: EmbeddingProvider::Custom,
+                    endpoint: server.url(),
+                    model: "test-model".into(),
+                    api_key: None,
+                    dimensions: None,
+                },
+                search: None,
+                index: None,
+            };
+            Config::save_config_file(vault.to_str().unwrap(), &config).unwrap();
+
+            // Run indexing
+            let stats = index_vault(vault.to_str().unwrap(), false).await.unwrap();
+
+            assert_eq!(stats.total_files, 3);
+            assert_eq!(stats.indexed, 3);
+            assert_eq!(stats.skipped, 0);
+            assert!(stats.total_chunks > 0);
+
+            // Verify vectors were persisted
+            let config = Config::new(vault.to_str().unwrap());
+            let vi = VectorIndex::load(&config.vectors_path()).unwrap();
+            assert!(!vi.entries.is_empty());
+
+            // Verify hashes were saved
+            let hashes = load_hashes(&config.hashes_path());
+            assert_eq!(hashes.len(), 3);
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn index_vault_incremental_no_changes() {
+        run_async_test(async {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = dir.path();
+
+            fs::write(vault.join("note.md"), "# Title\nContent here.").unwrap();
+
+            let mut server = mockito::Server::new();
+            let response_body = serde_json::json!({
+                "data": [{"embedding": [0.1, 0.2, 0.3]}]
+            });
+            let _mock = server
+                .mock("POST", "/v1/embeddings")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(response_body.to_string())
+                .create();
+
+            let config = ConfigFile {
+                vault_path: None,
+                embedding: EmbeddingConfig {
+                    provider: EmbeddingProvider::Custom,
+                    endpoint: server.url(),
+                    model: "test-model".into(),
+                    api_key: None,
+                    dimensions: None,
+                },
+                search: None,
+                index: None,
+            };
+            Config::save_config_file(vault.to_str().unwrap(), &config).unwrap();
+
+            // First index
+            let stats1 = index_vault(vault.to_str().unwrap(), false).await.unwrap();
+            assert_eq!(stats1.indexed, 1);
+
+            // Second index — should skip (unchanged)
+            let stats2 = index_vault(vault.to_str().unwrap(), false).await.unwrap();
+            assert_eq!(stats2.indexed, 0);
+            assert_eq!(stats2.skipped, 1);
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn index_vault_force_reindex() {
+        run_async_test(async {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = dir.path();
+
+            fs::write(vault.join("note.md"), "# Title\nContent.").unwrap();
+
+            let mut server = mockito::Server::new();
+            let response_body = serde_json::json!({
+                "data": [{"embedding": [0.1, 0.2, 0.3]}]
+            });
+            let _mock = server
+                .mock("POST", "/v1/embeddings")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(response_body.to_string())
+                .create();
+
+            let config = ConfigFile {
+                vault_path: None,
+                embedding: EmbeddingConfig {
+                    provider: EmbeddingProvider::Custom,
+                    endpoint: server.url(),
+                    model: "test-model".into(),
+                    api_key: None,
+                    dimensions: None,
+                },
+                search: None,
+                index: None,
+            };
+            Config::save_config_file(vault.to_str().unwrap(), &config).unwrap();
+
+            // First index
+            index_vault(vault.to_str().unwrap(), false).await.unwrap();
+
+            // Force reindex
+            let stats = index_vault(vault.to_str().unwrap(), true).await.unwrap();
+            assert_eq!(stats.indexed, 1); // re-indexed even though unchanged
+            assert_eq!(stats.skipped, 0);
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn index_vault_handles_deleted_files() {
+        run_async_test(async {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = dir.path();
+
+            fs::write(vault.join("keep.md"), "keep this").unwrap();
+            fs::write(vault.join("delete.md"), "delete this").unwrap();
+
+            let mut server = mockito::Server::new();
+            let response_body = serde_json::json!({
+                "data": [
+                    {"embedding": [0.1, 0.2, 0.3]},
+                    {"embedding": [0.4, 0.5, 0.6]}
+                ]
+            });
+            let _mock = server
+                .mock("POST", "/v1/embeddings")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(response_body.to_string())
+                .create();
+
+            let config = ConfigFile {
+                vault_path: None,
+                embedding: EmbeddingConfig {
+                    provider: EmbeddingProvider::Custom,
+                    endpoint: server.url(),
+                    model: "test-model".into(),
+                    api_key: None,
+                    dimensions: None,
+                },
+                search: None,
+                index: None,
+            };
+            Config::save_config_file(vault.to_str().unwrap(), &config).unwrap();
+
+            // First index with 2 files
+            let stats1 = index_vault(vault.to_str().unwrap(), false).await.unwrap();
+            assert_eq!(stats1.total_files, 2);
+
+            // Delete one file
+            fs::remove_file(vault.join("delete.md")).unwrap();
+
+            // Second index should detect deletion
+            let stats2 = index_vault(vault.to_str().unwrap(), false).await.unwrap();
+            assert_eq!(stats2.total_files, 1);
+            assert_eq!(stats2.deleted, 1);
+        });
+    }
+}

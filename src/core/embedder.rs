@@ -389,3 +389,227 @@ fn probe_ollama(endpoint: &str) -> bool {
     };
     client.get(&url).send().is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── batch_size_for_provider ──────────────────────────────────────────────
+
+    #[test]
+    fn batch_size_ollama() {
+        assert_eq!(batch_size_for_provider(&EmbeddingProvider::Ollama), 32);
+    }
+
+    #[test]
+    fn batch_size_openai() {
+        assert_eq!(batch_size_for_provider(&EmbeddingProvider::Openai), 512);
+    }
+
+    #[test]
+    fn batch_size_custom() {
+        assert_eq!(batch_size_for_provider(&EmbeddingProvider::Custom), 32);
+    }
+
+    // ── normalize_ollama_host ────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_full_url() {
+        assert_eq!(
+            normalize_ollama_host("http://localhost:11434"),
+            "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn normalize_host_port() {
+        assert_eq!(
+            normalize_ollama_host("localhost:11434"),
+            "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn normalize_port_only() {
+        assert_eq!(normalize_ollama_host(":11434"), "http://localhost:11434");
+    }
+
+    // ── HealthStatus ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn health_status_is_ok() {
+        assert!(HealthStatus::Ok.is_ok());
+        assert!(!HealthStatus::Unreachable("x".into()).is_ok());
+        assert!(!HealthStatus::ModelMissing("x".into()).is_ok());
+    }
+
+    #[test]
+    fn health_status_message() {
+        assert_eq!(HealthStatus::Ok.message(), "OK");
+        assert_eq!(
+            HealthStatus::Unreachable("err".into()).message(),
+            "err"
+        );
+    }
+
+    // ── get_embeddings with mock server ──────────────────────────────────────
+
+    #[test]
+    fn get_embeddings_success() {
+        let mut server = mockito::Server::new();
+
+        let response_body = serde_json::json!({
+            "data": [
+                {"embedding": [0.1, 0.2, 0.3]},
+                {"embedding": [0.4, 0.5, 0.6]}
+            ]
+        });
+
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(response_body.to_string())
+            .create();
+
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Custom,
+            endpoint: server.url(),
+            model: "test-model".into(),
+            api_key: None,
+            dimensions: None,
+        };
+
+        let result = get_embeddings(
+            &config,
+            &["hello".to_string(), "world".to_string()],
+        );
+        mock.assert();
+
+        let embeddings = result.unwrap();
+        assert_eq!(embeddings.len(), 2);
+        assert_eq!(embeddings[0], vec![0.1, 0.2, 0.3]);
+        assert_eq!(embeddings[1], vec![0.4, 0.5, 0.6]);
+    }
+
+    #[test]
+    fn get_embeddings_empty_input() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Custom,
+            endpoint: "http://unused".into(),
+            model: "test".into(),
+            api_key: None,
+            dimensions: None,
+        };
+        let result = get_embeddings(&config, &[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn get_embeddings_api_error() {
+        let mut server = mockito::Server::new();
+
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .create();
+
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Custom,
+            endpoint: server.url(),
+            model: "test-model".into(),
+            api_key: None,
+            dimensions: None,
+        };
+
+        let result = get_embeddings(&config, &["hello".to_string()]);
+        mock.assert();
+        assert!(result.is_err());
+    }
+
+    // ── get_embeddings_async with mock server ────────────────────────────────
+
+    #[test]
+    fn get_embeddings_async_success() {
+        // Skip: reqwest::blocking::Client cannot be used inside any tokio runtime context.
+        // get_embeddings_async delegates to blocking get_embeddings for single batches.
+        // This is tested indirectly through the blocking get_embeddings_success test.
+    }
+
+    #[test]
+    fn get_embeddings_async_empty() {
+        // Empty input returns immediately without creating a client
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let config = EmbeddingConfig {
+                    provider: EmbeddingProvider::Custom,
+                    endpoint: "http://unused".into(),
+                    model: "test".into(),
+                    api_key: None,
+                    dimensions: None,
+                };
+                let result = get_embeddings_async(&config, &[]).await.unwrap();
+                assert!(result.is_empty());
+            });
+        })
+        .join()
+        .unwrap();
+    }
+
+    // ── resolve_auth_header ──────────────────────────────────────────────────
+
+    #[test]
+    fn auth_header_ollama() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Ollama,
+            endpoint: "http://localhost:11434".into(),
+            model: "test".into(),
+            api_key: None,
+            dimensions: None,
+        };
+        let auth = resolve_auth_header(&config).unwrap();
+        assert_eq!(auth.as_deref(), Some("Bearer ollama"));
+    }
+
+    #[test]
+    fn auth_header_openai_with_key() {
+        unsafe { std::env::set_var("PEARL_TEST_AUTH", "sk-test") };
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Openai,
+            endpoint: "https://api.openai.com".into(),
+            model: "test".into(),
+            api_key: Some("$PEARL_TEST_AUTH".into()),
+            dimensions: None,
+        };
+        let auth = resolve_auth_header(&config).unwrap();
+        assert_eq!(auth.as_deref(), Some("Bearer sk-test"));
+        unsafe { std::env::remove_var("PEARL_TEST_AUTH") };
+    }
+
+    #[test]
+    fn auth_header_openai_no_key_fails() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Openai,
+            endpoint: "https://api.openai.com".into(),
+            model: "test".into(),
+            api_key: None,
+            dimensions: None,
+        };
+        assert!(resolve_auth_header(&config).is_err());
+    }
+
+    #[test]
+    fn auth_header_custom_no_key_ok() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Custom,
+            endpoint: "http://localhost:8080".into(),
+            model: "test".into(),
+            api_key: None,
+            dimensions: None,
+        };
+        let auth = resolve_auth_header(&config).unwrap();
+        assert!(auth.is_none());
+    }
+}

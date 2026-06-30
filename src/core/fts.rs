@@ -153,3 +153,136 @@ pub struct FtsHit {
     pub title: String,
     pub score: f32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_doc(path: &str, title: &str, body: &str) -> FtsDocument {
+        FtsDocument {
+            path: path.to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+            tags: String::new(),
+        }
+    }
+
+    #[test]
+    fn rebuild_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![
+            make_doc("a.md", "Rust Programming", "Rust is a systems language"),
+            make_doc("b.md", "Python Guide", "Python is great for scripting"),
+        ])
+        .unwrap();
+
+        let results = fts.search("rust", 10).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].path, "a.md");
+    }
+
+    #[test]
+    fn search_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        let results = fts.search("anything", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn has_documents_false_initially() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+        assert!(!fts.has_documents().unwrap());
+    }
+
+    #[test]
+    fn has_documents_true_after_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![make_doc("a.md", "Title", "Body")])
+            .unwrap();
+        assert!(fts.has_documents().unwrap());
+    }
+
+    #[test]
+    fn incremental_update_add_new() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![make_doc("a.md", "Original", "content")])
+            .unwrap();
+
+        // Add a new document
+        fts.update(vec![make_doc("b.md", "New Doc", "new content")], &[])
+            .unwrap();
+
+        let results = fts.search("new", 10).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].path, "b.md");
+    }
+
+    #[test]
+    fn incremental_update_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![
+            make_doc("a.md", "Keep", "keep this"),
+            make_doc("b.md", "Remove", "remove this"),
+        ])
+        .unwrap();
+
+        fts.update(vec![], &["b.md"]).unwrap();
+
+        let results = fts.search("remove", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn incremental_update_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![make_doc("a.md", "Old Title", "old body content")])
+            .unwrap();
+
+        fts.update(
+            vec![make_doc("a.md", "New Title", "new body content")],
+            &[],
+        )
+        .unwrap();
+
+        let results = fts.search("new", 10).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].title, "New Title");
+    }
+
+    #[test]
+    fn search_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_path = dir.path().join("tantivy");
+        let fts = FtsEngine::open(&index_path).unwrap();
+
+        fts.rebuild(vec![
+            make_doc("a.md", "Alpha", "searchable content"),
+            make_doc("b.md", "Beta", "searchable content"),
+            make_doc("c.md", "Gamma", "searchable content"),
+        ])
+        .unwrap();
+
+        let results = fts.search("searchable", 2).unwrap();
+        assert!(results.len() <= 2);
+    }
+}

@@ -152,3 +152,171 @@ pub fn build_embedding_input(chunk: &Chunk) -> String {
         None => chunk.text.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── estimate_tokens ──────────────────────────────────────────────────────
+
+    #[test]
+    fn estimate_tokens_ascii() {
+        // 4 ASCII chars ≈ 1 token, +1 ceiling
+        assert_eq!(estimate_tokens("abcd"), 2); // 4/4 + 1 = 2
+        assert_eq!(estimate_tokens("abcdefgh"), 3); // 8/4 + 1 = 3
+    }
+
+    #[test]
+    fn estimate_tokens_cjk() {
+        // CJK: 10/15 ≈ 0.67 tokens per char
+        assert_eq!(estimate_tokens("你好"), 2); // 2*10/15 + 1 = 2
+        assert_eq!(estimate_tokens("你好世界"), 3); // 4*10/15 + 1 = 3
+    }
+
+    #[test]
+    fn estimate_tokens_mixed() {
+        let tokens = estimate_tokens("hello 你好 world");
+        assert!(tokens > 0);
+        // "hello " = 6 ASCII, "你好" = 2 CJK, " world" = 6 ASCII
+        // ASCII: 12/4 = 3, CJK: 2*10/15 = 1, +1 = 5
+        assert_eq!(tokens, 5);
+    }
+
+    #[test]
+    fn estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 1); // ceiling
+    }
+
+    // ── detect_heading ───────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_heading_h1() {
+        let result = detect_heading("# Title");
+        assert!(result.is_some());
+        let (level, text) = result.unwrap();
+        assert_eq!(level, HeadingLevel::H1);
+        assert_eq!(text, "Title");
+    }
+
+    #[test]
+    fn detect_heading_h3() {
+        let result = detect_heading("### Sub heading");
+        assert!(result.is_some());
+        let (level, text) = result.unwrap();
+        assert_eq!(level, HeadingLevel::H3);
+        assert_eq!(text, "Sub heading");
+    }
+
+    #[test]
+    fn detect_heading_no_space() {
+        // "#NoSpace" should NOT be a heading
+        assert!(detect_heading("#NoSpace").is_none());
+    }
+
+    #[test]
+    fn detect_heading_not_heading() {
+        assert!(detect_heading("Just text").is_none());
+        assert!(detect_heading("").is_none());
+    }
+
+    #[test]
+    fn detect_heading_with_leading_whitespace() {
+        let result = detect_heading("  ## Indented");
+        assert!(result.is_some());
+        let (level, text) = result.unwrap();
+        assert_eq!(level, HeadingLevel::H2);
+        assert_eq!(text, "Indented");
+    }
+
+    #[test]
+    fn detect_heading_empty_text() {
+        // "# " (hash + space, no text) is a valid heading with empty text
+        let result = detect_heading("# ");
+        assert!(result.is_some());
+        let (_, text) = result.unwrap();
+        assert_eq!(text, "");
+    }
+
+    // ── chunk_markdown ───────────────────────────────────────────────────────
+
+    #[test]
+    fn chunk_simple_text() {
+        let body = "Hello world.\nThis is a test.";
+        let chunks = chunk_markdown(body, "Test", 400);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].start_line, 1);
+        assert_eq!(chunks[0].end_line, 2);
+        assert!(chunks[0].heading.is_none());
+    }
+
+    #[test]
+    fn chunk_splits_on_heading() {
+        let body = "Intro text\n## Section A\nContent A\n## Section B\nContent B";
+        let chunks = chunk_markdown(body, "Doc", 400);
+        assert!(chunks.len() >= 2);
+        // First chunk should have no heading (intro)
+        // Second chunk should have heading "Doc > Section A"
+        let section_chunks: Vec<_> = chunks.iter().filter(|c| c.heading.is_some()).collect();
+        assert!(section_chunks.len() >= 2);
+    }
+
+    #[test]
+    fn chunk_heading_breadcrumb() {
+        let body = "## Topic\nSome content";
+        let chunks = chunk_markdown(body, "MyDoc", 400);
+        let headed: Vec<_> = chunks.iter().filter(|c| c.heading.is_some()).collect();
+        assert_eq!(headed.len(), 1);
+        assert_eq!(headed[0].heading.as_ref().unwrap(), "MyDoc > Topic");
+    }
+
+    #[test]
+    fn chunk_splits_on_token_budget() {
+        // Create a long text that exceeds max_tokens
+        let long_line = "word ".repeat(200); // ~1000 chars, ~200 tokens
+        let body = format!("{}\n\n{}", long_line, long_line);
+        let chunks = chunk_markdown(&body, "Doc", 100);
+        assert!(chunks.len() >= 2, "Expected split into multiple chunks");
+    }
+
+    #[test]
+    fn chunk_empty_body() {
+        let chunks = chunk_markdown("", "Doc", 400);
+        assert_eq!(chunks.len(), 0);
+    }
+
+    #[test]
+    fn chunk_line_numbers_accurate() {
+        let body = "Line 1\nLine 2\nLine 3\n## Heading\nLine 5\nLine 6";
+        let chunks = chunk_markdown(body, "Doc", 400);
+        // Should have at least 2 chunks: before heading and after
+        assert!(chunks.len() >= 2);
+        // First chunk starts at line 1
+        assert_eq!(chunks[0].start_line, 1);
+    }
+
+    // ── build_embedding_input ────────────────────────────────────────────────
+
+    #[test]
+    fn build_embedding_input_with_heading() {
+        let chunk = Chunk {
+            text: "content".to_string(),
+            start_line: 1,
+            end_line: 1,
+            heading: Some("Doc > Section".to_string()),
+        };
+        let input = build_embedding_input(&chunk);
+        assert_eq!(input, "Doc > Section\n\ncontent");
+    }
+
+    #[test]
+    fn build_embedding_input_no_heading() {
+        let chunk = Chunk {
+            text: "content".to_string(),
+            start_line: 1,
+            end_line: 1,
+            heading: None,
+        };
+        let input = build_embedding_input(&chunk);
+        assert_eq!(input, "content");
+    }
+}

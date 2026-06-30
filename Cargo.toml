@@ -64,6 +64,10 @@ directories = "6"
 cliclack = "0.5"
 console = "0.16"
 
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+
 [profile.release]
 lto = true
 strip = true

@@ -150,3 +150,162 @@ fn cosine_similarity(a: &[f32], b: &[f32], a_norm: f32) -> f32 {
 fn vec_norm(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── cosine_similarity ────────────────────────────────────────────────────
+
+    #[test]
+    fn cosine_similarity_identical() {
+        let a = [1.0, 0.0, 0.0];
+        let score = cosine_similarity(&a, &a, vec_norm(&a));
+        assert!((score - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_orthogonal() {
+        let a = [1.0, 0.0, 0.0];
+        let b = [0.0, 1.0, 0.0];
+        let score = cosine_similarity(&a, &b, vec_norm(&a));
+        assert!((score - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_opposite() {
+        let a = [1.0, 0.0];
+        let b = [-1.0, 0.0];
+        let score = cosine_similarity(&a, &b, vec_norm(&a));
+        assert!((score - (-1.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_zero_vector() {
+        let a = [0.0, 0.0];
+        let b = [1.0, 0.0];
+        let score = cosine_similarity(&a, &b, vec_norm(&a));
+        // a_norm=0 → 0/0 = NaN; the caller (query) handles this by filtering
+        assert!(score.is_nan());
+    }
+
+    // ── vec_norm ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vec_norm_basic() {
+        let v = [3.0, 4.0];
+        assert!((vec_norm(&v) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vec_norm_zero() {
+        assert_eq!(vec_norm(&[0.0, 0.0]), 0.0);
+    }
+
+    // ── VectorIndex::query ───────────────────────────────────────────────────
+
+    fn make_entry(path: &str, vector: Vec<f32>) -> VectorEntry {
+        VectorEntry {
+            vector,
+            metadata: ChunkMeta {
+                path: path.to_string(),
+                title: path.to_string(),
+                tags: String::new(),
+                heading: String::new(),
+                start_line: 1,
+                end_line: 1,
+                text: "test".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn query_top_k() {
+        let mut idx = VectorIndex::default();
+        idx.add_entries(vec![
+            make_entry("a.md", vec![1.0, 0.0, 0.0]),
+            make_entry("b.md", vec![0.0, 1.0, 0.0]),
+            make_entry("c.md", vec![0.7, 0.7, 0.0]),
+        ]);
+
+        let query = vec![1.0, 0.0, 0.0];
+        let results = idx.query(&query, 2);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].metadata.path, "a.md"); // exact match
+    }
+
+    #[test]
+    fn query_empty_index() {
+        let idx = VectorIndex::default();
+        let results = idx.query(&[1.0, 0.0], 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_respects_limit() {
+        let mut idx = VectorIndex::default();
+        idx.add_entries(vec![
+            make_entry("a.md", vec![1.0, 0.0]),
+            make_entry("b.md", vec![0.9, 0.1]),
+            make_entry("c.md", vec![0.8, 0.2]),
+        ]);
+        let results = idx.query(&[1.0, 0.0], 1);
+        assert_eq!(results.len(), 1);
+    }
+
+    // ── VectorIndex::remove_file ─────────────────────────────────────────────
+
+    #[test]
+    fn remove_file_entries() {
+        let mut idx = VectorIndex::default();
+        idx.add_entries(vec![
+            make_entry("a.md", vec![1.0]),
+            make_entry("b.md", vec![0.5]),
+            make_entry("a.md", vec![0.8]),
+        ]);
+        assert_eq!(idx.entries.len(), 3);
+
+        idx.remove_file("a.md");
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].metadata.path, "b.md");
+    }
+
+    // ── Save / Load ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vectors.json");
+
+        let mut idx = VectorIndex::default();
+        idx.add_entries(vec![
+            make_entry("note.md", vec![0.1, 0.2, 0.3]),
+            make_entry("other.md", vec![0.4, 0.5, 0.6]),
+        ]);
+        idx.save(&path).unwrap();
+
+        let loaded = VectorIndex::load(&path).unwrap();
+        assert_eq!(loaded.entries.len(), 2);
+        assert_eq!(loaded.entries[0].metadata.path, "note.md");
+        assert_eq!(loaded.entries[0].vector, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn load_nonexistent_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let idx = VectorIndex::load(&path).unwrap();
+        assert!(idx.entries.is_empty());
+    }
+
+    #[test]
+    fn save_and_load_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vectors.json");
+        let idx = VectorIndex::default();
+        idx.save(&path).unwrap();
+
+        let loaded = VectorIndex::load(&path).unwrap();
+        assert!(loaded.entries.is_empty());
+    }
+}

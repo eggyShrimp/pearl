@@ -539,3 +539,236 @@ fn can_connect(host: &str, port: u16) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── EmbeddingConfig::resolve_api_key ─────────────────────────────────────
+
+    #[test]
+    fn resolve_api_key_literal() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Openai,
+            endpoint: "https://api.openai.com".into(),
+            model: "test".into(),
+            api_key: Some("sk-abc123".into()),
+            dimensions: None,
+        };
+        assert_eq!(config.resolve_api_key().as_deref(), Some("sk-abc123"));
+    }
+
+    #[test]
+    fn resolve_api_key_env_var() {
+        unsafe { std::env::set_var("PEARL_TEST_KEY", "env-secret-value") };
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Openai,
+            endpoint: "https://api.openai.com".into(),
+            model: "test".into(),
+            api_key: Some("$PEARL_TEST_KEY".into()),
+            dimensions: None,
+        };
+        assert_eq!(config.resolve_api_key().as_deref(), Some("env-secret-value"));
+        unsafe { std::env::remove_var("PEARL_TEST_KEY") };
+    }
+
+    #[test]
+    fn resolve_api_key_none() {
+        let config = EmbeddingConfig {
+            provider: EmbeddingProvider::Ollama,
+            endpoint: "http://localhost:11434".into(),
+            model: "test".into(),
+            api_key: None,
+            dimensions: None,
+        };
+        assert!(config.resolve_api_key().is_none());
+    }
+
+    // ── merge_config_files ───────────────────────────────────────────────────
+
+    #[test]
+    fn merge_both_none() {
+        assert!(Config::merge_config_files(None, None).is_none());
+    }
+
+    #[test]
+    fn merge_global_only() {
+        let global = ConfigFile {
+            vault_path: Some("/global".into()),
+            embedding: EmbeddingConfig::default_ollama(),
+            search: None,
+            index: None,
+        };
+        let result = Config::merge_config_files(Some(global), None).unwrap();
+        assert_eq!(result.vault_path.as_deref(), Some("/global"));
+    }
+
+    #[test]
+    fn merge_vault_overrides_global() {
+        let global = ConfigFile {
+            vault_path: Some("/global".into()),
+            embedding: EmbeddingConfig {
+                provider: EmbeddingProvider::Ollama,
+                endpoint: "http://localhost:11434".into(),
+                model: "global-model".into(),
+                api_key: None,
+                dimensions: None,
+            },
+            search: None,
+            index: None,
+        };
+        let vault = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig {
+                provider: EmbeddingProvider::Openai,
+                endpoint: "https://api.openai.com".into(),
+                model: "vault-model".into(),
+                api_key: Some("$OPENAI_API_KEY".into()),
+                dimensions: None,
+            },
+            search: None,
+            index: None,
+        };
+        let result = Config::merge_config_files(Some(global), Some(vault)).unwrap();
+        // Vault embedding overrides global
+        assert_eq!(result.embedding.model, "vault-model");
+        assert_eq!(result.embedding.provider, EmbeddingProvider::Openai);
+        // Global vault_path is preserved (vault didn't set one)
+        assert_eq!(result.vault_path.as_deref(), Some("/global"));
+    }
+
+    #[test]
+    fn merge_search_config() {
+        let global = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig::default_ollama(),
+            search: Some(SearchConfigFile {
+                vector_weight: Some(0.8),
+                fts_weight: None,
+                default_limit: None,
+            }),
+            index: None,
+        };
+        let vault = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig::default_ollama(),
+            search: Some(SearchConfigFile {
+                vector_weight: None,
+                fts_weight: Some(0.4),
+                default_limit: None,
+            }),
+            index: None,
+        };
+        let result = Config::merge_config_files(Some(global), Some(vault)).unwrap();
+        let search = result.search.unwrap();
+        assert_eq!(search.vector_weight, Some(0.8)); // from global
+        assert_eq!(search.fts_weight, Some(0.4)); // from vault
+    }
+
+    // ── Config::new with env vars ────────────────────────────────────────────
+
+    #[test]
+    fn config_new_with_env_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_str().unwrap();
+
+        unsafe { std::env::set_var("EMBEDDING_ENDPOINT", "http://custom:9999") };
+        unsafe { std::env::set_var("EMBEDDING_MODEL", "custom-model") };
+
+        let config = Config::new(vault_path);
+        assert_eq!(config.embedding.endpoint, "http://custom:9999");
+        assert_eq!(config.embedding.model, "custom-model");
+
+        unsafe { std::env::remove_var("EMBEDDING_ENDPOINT") };
+        unsafe { std::env::remove_var("EMBEDDING_MODEL") };
+    }
+
+    // ── Config file save/load roundtrip ──────────────────────────────────────
+
+    #[test]
+    fn save_and_load_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_str().unwrap();
+
+        let config = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig::default_ollama(),
+            search: Some(SearchConfigFile {
+                vector_weight: Some(0.6),
+                fts_weight: Some(0.4),
+                default_limit: Some(20),
+            }),
+            index: None,
+        };
+
+        Config::save_config_file(vault_path, &config).unwrap();
+        assert!(Config::config_exists(vault_path));
+
+        let loaded = Config::new(vault_path);
+        assert!((loaded.search.vector_weight - 0.6).abs() < 0.01);
+        assert!((loaded.search.fts_weight - 0.4).abs() < 0.01);
+        assert_eq!(loaded.search.default_limit, 20);
+    }
+
+    // ── MCP state save/load ──────────────────────────────────────────────────
+
+    #[test]
+    fn mcp_state_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_str().unwrap();
+
+        let state = McpRuntimeState::stdio(vault_path);
+        Config::save_mcp_state(vault_path, &state).unwrap();
+
+        let loaded = Config::load_mcp_state(vault_path).unwrap();
+        assert_eq!(loaded.transport, "stdio");
+        assert_eq!(loaded.vault_path, vault_path);
+
+        Config::clear_mcp_state(vault_path).unwrap();
+        assert!(Config::load_mcp_state(vault_path).is_none());
+    }
+
+    // ── Validate ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_resets_zero_max_chunk_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_str().unwrap();
+
+        let config_file = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig::default_ollama(),
+            search: None,
+            index: Some(IndexConfigFile {
+                max_chunk_tokens: Some(0),
+            }),
+        };
+        Config::save_config_file(vault_path, &config_file).unwrap();
+
+        let config = Config::new(vault_path);
+        assert_eq!(config.index.max_chunk_tokens, 400); // reset to default
+    }
+
+    #[test]
+    fn validate_resets_empty_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_str().unwrap();
+
+        let config_file = ConfigFile {
+            vault_path: None,
+            embedding: EmbeddingConfig {
+                provider: EmbeddingProvider::Ollama,
+                endpoint: "http://localhost:11434".into(),
+                model: "   ".into(), // whitespace only
+                api_key: None,
+                dimensions: None,
+            },
+            search: None,
+            index: None,
+        };
+        Config::save_config_file(vault_path, &config_file).unwrap();
+
+        let config = Config::new(vault_path);
+        assert_eq!(config.embedding.model, "bge-m3"); // reset to default
+    }
+}

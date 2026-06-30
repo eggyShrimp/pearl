@@ -309,3 +309,120 @@ fn merge_results(
     results.truncate(limit);
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, EmbeddingConfig, EmbeddingProvider, IndexConfig, SearchConfig};
+    use std::path::PathBuf;
+
+    fn test_config() -> Config {
+        Config {
+            vault_path: PathBuf::from("/tmp/test"),
+            embedding: EmbeddingConfig {
+                provider: EmbeddingProvider::Ollama,
+                endpoint: "http://localhost:11434".into(),
+                model: "test".into(),
+                api_key: None,
+                dimensions: None,
+            },
+            index: IndexConfig {
+                data_dir: PathBuf::from("/tmp/test/.vault-mcp"),
+                max_chunk_tokens: 400,
+            },
+            search: SearchConfig {
+                vector_weight: 0.7,
+                fts_weight: 0.3,
+                default_limit: 10,
+            },
+        }
+    }
+
+    fn make_result(path: &str, score: f32, match_type: &str) -> SearchResult {
+        SearchResult {
+            path: path.to_string(),
+            title: path.to_string(),
+            chunk: "text".to_string(),
+            score,
+            start_line: 1,
+            end_line: 1,
+            tags: vec![],
+            heading: String::new(),
+            match_type: match_type.to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_vector_only() {
+        let config = test_config();
+        let vector = vec![make_result("a.md", 0.9, "semantic")];
+        let fts = vec![];
+        let results = merge_results(vector, fts, &config, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_type, "semantic");
+    }
+
+    #[test]
+    fn merge_fts_only() {
+        let config = test_config();
+        let vector = vec![];
+        let fts = vec![make_result("b.md", 2.0, "fts")];
+        let results = merge_results(vector, fts, &config, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_type, "fts");
+    }
+
+    #[test]
+    fn merge_hybrid_same_path() {
+        let config = test_config();
+        let vector = vec![make_result("a.md", 0.9, "semantic")];
+        let fts = vec![make_result("a.md", 3.0, "fts")];
+        let results = merge_results(vector, fts, &config, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_type, "hybrid");
+        // Score should be: 0.7 * 0.9 + 0.3 * (3.0/3.0) = 0.63 + 0.3 = 0.93
+        assert!((results[0].score - 0.93).abs() < 0.01);
+    }
+
+    #[test]
+    fn merge_deduplicates() {
+        let config = test_config();
+        let vector = vec![
+            make_result("a.md", 0.9, "semantic"),
+            make_result("b.md", 0.8, "semantic"),
+        ];
+        let fts = vec![make_result("a.md", 2.0, "fts")];
+        let results = merge_results(vector, fts, &config, 10);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn merge_respects_limit() {
+        let config = test_config();
+        let vector = vec![
+            make_result("a.md", 0.9, "semantic"),
+            make_result("b.md", 0.8, "semantic"),
+            make_result("c.md", 0.7, "semantic"),
+        ];
+        let fts = vec![];
+        let results = merge_results(vector, fts, &config, 2);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn merge_sorted_by_score() {
+        let config = test_config();
+        let vector = vec![make_result("a.md", 0.5, "semantic")];
+        let fts = vec![make_result("b.md", 5.0, "fts")]; // higher after normalization
+        let results = merge_results(vector, fts, &config, 10);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].score >= results[1].score);
+    }
+
+    #[test]
+    fn merge_empty_inputs() {
+        let config = test_config();
+        let results = merge_results(vec![], vec![], &config, 10);
+        assert!(results.is_empty());
+    }
+}
