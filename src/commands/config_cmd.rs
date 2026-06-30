@@ -1,4 +1,23 @@
+use anyhow::Result;
+
 use crate::config;
+use crate::vault::resolve_vault;
+
+pub fn execute(vault: Option<String>, json: bool) -> Result<()> {
+    let config = if let Some(ref v) = vault {
+        config::Config::new(v)
+    } else if let Ok(v) = resolve_vault(None) {
+        config::Config::new(&v)
+    } else {
+        config::Config::new(".")
+    };
+    if json {
+        print_config_json(&config);
+    } else {
+        print_config_human(&config);
+    }
+    Ok(())
+}
 
 /// Print a concise config summary (used after init).
 pub fn print_config_summary(config: &config::Config) {

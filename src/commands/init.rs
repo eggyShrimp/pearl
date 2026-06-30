@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use anyhow::Result;
 
 use crate::config;
-use crate::vault::{register_vault, detect_vault_interactive};
+use crate::vault::{detect_vault_interactive, register_vault};
 
 /// Interactive onboarding: guide user to configure embedding provider (vault-local).
 pub fn run_init(vault_path: &str) -> Result<()> {
@@ -14,6 +14,7 @@ pub fn run_init(vault_path: &str) -> Result<()> {
 
     cliclack::log::info(format!("Vault: {}", vault_path))?;
 
+    // Existing config found — ask before overwriting
     if Config::config_exists(vault_path) {
         let overwrite: bool = cliclack::confirm("Config file already exists. Overwrite?")
             .initial_value(false)
@@ -74,6 +75,7 @@ pub fn run_init_global() -> Result<()> {
         }
     }
 
+    // Pre-fill with auto-detected vault if available
     let default_vault = detect_vault_interactive().ok().unwrap_or_default();
     let vault_path: String = cliclack::input("Default vault path")
         .default_input(&default_vault)
@@ -97,6 +99,7 @@ pub fn run_init_global() -> Result<()> {
 
     cliclack::outro("Global configuration saved!")?;
 
+    // Resolve effective vault for display — fall back to "." if none configured
     let effective_vault = vault_path.as_deref().unwrap_or(".");
     let config = Config::new(effective_vault);
     crate::commands::config_cmd::print_config_summary(&config);
@@ -104,7 +107,7 @@ pub fn run_init_global() -> Result<()> {
     Ok(())
 }
 
-/// Guard: init requires an interactive terminal.
+/// Guard: init requires an interactive terminal (stdin must be a TTY).
 pub fn check_interactive() -> Result<()> {
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
@@ -143,6 +146,7 @@ fn prompt_embedding_config() -> Result<config::EmbeddingConfig> {
 fn prompt_ollama_config() -> Result<config::EmbeddingConfig> {
     use config::{EmbeddingConfig, EmbeddingProvider};
 
+    // Probe local Ollama instance for auto-detection
     let detected = crate::core::embedder::detect_ollama_endpoint();
     let default_endpoint = detected
         .as_ref()
@@ -183,6 +187,7 @@ fn prompt_openai_config() -> Result<config::EmbeddingConfig> {
         .default_input("text-embedding-3-small")
         .interact()?;
 
+    // API key can come from env var or direct input
     let key_source: &str = cliclack::select("API key source")
         .item("env", "Read from $OPENAI_API_KEY env var", "")
         .item("direct", "Enter key now", "")
@@ -228,6 +233,7 @@ fn prompt_custom_config() -> Result<config::EmbeddingConfig> {
         .initial_value(true)
         .interact()?;
 
+    // API key is optional for custom endpoints
     let api_key = if needs_key {
         let key_source: &str = cliclack::select("API key source")
             .item("env", "Read from env var", "")
@@ -268,6 +274,8 @@ fn prompt_custom_config() -> Result<config::EmbeddingConfig> {
     Ok(tmp_config)
 }
 
+/// Check if the embedding service is reachable and the model is available.
+/// Logs success/warning but does not abort — caller decides whether to proceed.
 fn verify_embedding_health(config: &config::EmbeddingConfig, label: &str, model: &str) {
     let health = crate::core::embedder::check_health(config);
     match &health {
@@ -278,10 +286,7 @@ fn verify_embedding_health(config: &config::EmbeddingConfig, label: &str, model:
             ));
         }
         crate::core::embedder::HealthStatus::ModelMissing(msg) => {
-            let _ = cliclack::log::warning(format!(
-                "{}\n  Run: ollama pull {}",
-                msg, model
-            ));
+            let _ = cliclack::log::warning(format!("{}\n  Run: ollama pull {}", msg, model));
         }
         crate::core::embedder::HealthStatus::Unreachable(msg) => {
             let _ = cliclack::log::warning(format!("{}\n  Check your endpoint and API key.", msg));
